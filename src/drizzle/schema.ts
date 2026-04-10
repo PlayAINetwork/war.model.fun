@@ -1,4 +1,5 @@
 import {
+  boolean,
   index,
   integer,
   json,
@@ -21,6 +22,7 @@ export const model = pgTable("model", {
   score: integer("score").notNull().default(0),
   maxScore: integer("max_score").notNull().default(0),
   creator: text("creator").notNull(),
+  paused: boolean("paused").notNull().default(false),
   lastRunAt: json("last_run_at").$type<Record<string, string>>().default({}),
   createdAt: timestamp("created_at", {
     withTimezone: true

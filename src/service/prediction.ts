@@ -666,6 +666,10 @@ async function runAllPredictionTasks() {
 
     for (const model of models) {
       try {
+        if (model.paused) {
+          continue;
+        }
+
         await runPredictionTask({
           modelId: model.id,
           modelProvider: model.provider,

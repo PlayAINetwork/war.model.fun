@@ -401,7 +401,6 @@ async function runPredictionTask({
   model: string;
   lastRunAt?: Record<string, string> | null;
 }) {
-  console.log(`Running prediction task for model ${modelId}`);
   const provider = MODEL_PROVIDER[modelProvider];
 
   // Group news fetch by category to apply per-category lastRunAt
@@ -428,9 +427,6 @@ async function runPredictionTask({
   }
 
   if (Object.keys(newsByCategory).length === 0) {
-    console.log(
-      `No new news articles found for model ${modelId}. Skipping prediction.`
-    );
     return [];
   }
 
@@ -660,6 +656,7 @@ Act decisively. Do not ask questions. Execute the process.`;
         .set({ lastRunAt: currentLastRunAt })
         .where(eq(schema.model.id, modelId));
     });
+    await runInsightEmbedderTask();
   }
 }
 
@@ -684,8 +681,6 @@ async function runAllPredictionTasks() {
 
 async function runOracleTask() {
   try {
-    console.log(`Executing oracle task at ${new Date().toISOString()}`);
-
     const pendingPredictions = await db
       .select({
         id: schema.predictions.id,
@@ -704,7 +699,6 @@ async function runOracleTask() {
       );
 
     if (!pendingPredictions.length) {
-      console.log("No pending predictions to verify. Oracle job will exit.");
       return;
     }
 
@@ -792,10 +786,6 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
 
 async function runInsightEmbedderTask() {
   try {
-    console.log(
-      `Executing insight embedder task at ${new Date().toISOString()}`
-    );
-
     const pendingInsights = await db
       .select({
         id: schema.history.id,
@@ -839,13 +829,10 @@ async function runInsightEmbedderTask() {
     }
   } catch (e) {
     console.error(`Error executing insight embedder task:`, e);
-  } finally {
-    setTimeout(runInsightEmbedderTask, 10 * 1000);
   }
 }
 
-if (env.NODE_ENV !== "local") {
+if (env.NODE_ENV === "local") {
   void runAllPredictionTasks();
   void runOracleTask();
-  void runInsightEmbedderTask();
 }

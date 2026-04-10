@@ -351,6 +351,8 @@ async function runPredictionTask({
     Awaited<ReturnType<typeof getNews>>["data"]
   > = {};
 
+  const lastFetchTime = new Date().toISOString();
+
   for (const category of categories) {
     const categoryLastRun = lastRunAt?.[category];
     const { data: categoryNews } = await getNews({
@@ -579,20 +581,22 @@ Act decisively. Do not ask questions. Execute the process.`;
         }))
     );
 
-    if (history.length) {
-      await db.insert(schema.history).values(history).onConflictDoNothing();
-    }
+    await db.transaction(async (tx) => {
+      if (history.length) {
+        await tx.insert(schema.history).values(history).onConflictDoNothing();
+      }
 
-    console.log(
-      `Finished processing category ${category} for model ${modelId}, history length: ${history.length}`
-    );
+      console.log(
+        `Finished processing category ${category} for model ${modelId}, history length: ${history.length}`
+      );
 
-    currentLastRunAt[category] = new Date().toISOString();
+      currentLastRunAt[category] = lastFetchTime;
 
-    await db
-      .update(schema.model)
-      .set({ lastRunAt: currentLastRunAt })
-      .where(eq(schema.model.id, modelId));
+      await tx
+        .update(schema.model)
+        .set({ lastRunAt: currentLastRunAt })
+        .where(eq(schema.model.id, modelId));
+    });
   }
 }
 
@@ -687,26 +691,28 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
         });
 
         if (output.isCorrect !== null) {
-          await db
-            .update(schema.predictions)
-            .set({
-              isCorrect: output.isCorrect,
-              outcomeSources: output.sources,
-              outcomeReasoning: output.outcomeReasoning
-            })
-            .where(eq(schema.predictions.id, prediction.id));
+          await db.transaction(async (tx) => {
+            await tx
+              .update(schema.predictions)
+              .set({
+                isCorrect: output.isCorrect,
+                outcomeSources: output.sources,
+                outcomeReasoning: output.outcomeReasoning
+              })
+              .where(eq(schema.predictions.id, prediction.id));
 
-          console.log(
-            `Updated prediction ${prediction.id} to score ${output.isCorrect}`
-          );
+            console.log(
+              `Updated prediction ${prediction.id} to score ${output.isCorrect}`
+            );
 
-          await db
-            .update(schema.model)
-            .set({
-              score: sql`${schema.model.score} + ${output.isCorrect}`,
-              maxScore: sql`${schema.model.maxScore} + 10`
-            })
-            .where(eq(schema.model.id, prediction.modelId!));
+            await tx
+              .update(schema.model)
+              .set({
+                score: sql`${schema.model.score} + ${output.isCorrect}`,
+                maxScore: sql`${schema.model.maxScore} + 10`
+              })
+              .where(eq(schema.model.id, prediction.modelId!));
+          });
         } else {
           console.log(`Prediction ${prediction.id} is still pending.`);
         }

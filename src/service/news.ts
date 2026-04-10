@@ -103,6 +103,14 @@ const scrapeWebsite = async ({
 Strip away all navigation, ads, footers, and other boilerplate.
 If the main content cannot be reliably extracted, return null for the content and summary.
 
+The response should be in JSON format with the following structure:
+{
+  "title": "Extracted title",
+  "content": "Extracted main content or null if it cannot be extracted",
+  "summary": "A short summary of the content or null if content cannot be extracted"
+}
+The response shouldn't contain any markdown formatting, HTML tags, or any other non-JSON text. Only return the JSON object.
+
 Webpage Content:
 ${text}`
   });

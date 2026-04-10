@@ -661,21 +661,28 @@ Act decisively. Do not ask questions. Execute the process.`;
 }
 
 async function runAllPredictionTasks() {
-  const models = await getModels();
+  try {
+    const models = await getModels();
 
-  for (const model of models) {
-    try {
-      await runPredictionTask({
-        modelId: model.id,
-        modelProvider: model.provider,
-        model: model.providerModelId,
-        lastRunAt: model.lastRunAt as Record<string, string> | null
-      });
-    } catch (e) {
-      console.error(`Error running prediction task for model ${model.id}:`, e);
-    } finally {
-      setTimeout(runAllPredictionTasks, 5 * 60 * 1000);
+    for (const model of models) {
+      try {
+        await runPredictionTask({
+          modelId: model.id,
+          modelProvider: model.provider,
+          model: model.providerModelId,
+          lastRunAt: model.lastRunAt as Record<string, string> | null
+        });
+      } catch (e) {
+        console.error(
+          `Error running prediction task for model ${model.id}:`,
+          e
+        );
+      }
     }
+  } catch (e) {
+    console.error("Error in runAllPredictionTasks:", e);
+  } finally {
+    setTimeout(runAllPredictionTasks, 5 * 60 * 1000);
   }
 }
 

@@ -4,6 +4,7 @@ import { NewsRouter, PredictionRouter } from "./route";
 import { serveStatic } from "hono/bun";
 import env from "./env";
 import { showRoutes } from "hono/dev";
+import { HTTPException } from "hono/http-exception";
 
 const app = new Hono();
 
@@ -29,6 +30,23 @@ app.get("/api/*", async (c) => {
   const data = await response.json();
 
   return c.json(data);
+});
+
+app.onError((err, c) => {
+  if (err instanceof HTTPException) {
+    c.status(err.status);
+    return c.json({
+      message: err.message
+    });
+  }
+
+  console.error(err);
+
+  c.status(500);
+
+  return c.json({
+    message: "Internal Server Error"
+  });
 });
 
 if (env.NODE_ENV === "local") {

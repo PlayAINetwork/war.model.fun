@@ -22,7 +22,6 @@
     "@hono/zod-validator": "^0.7.6",
     "@openrouter/ai-sdk-provider": "^2.5.1",
     "ai": "^6.0.156",
-    "cron": "^4.4.0",
     "drizzle-orm": "^0.45.2",
     "hono": "^4.12.12",
     "pg": "^8.20.0",

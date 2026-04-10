@@ -20,6 +20,9 @@ export const model = pgTable("model", {
   score: integer("score").notNull().default(0),
   maxScore: integer("max_score").notNull().default(0),
   creator: text("creator").notNull(),
+  lastRunAt: timestamp("last_run_at", {
+    withTimezone: true
+  }),
   createdAt: timestamp("created_at", {
     withTimezone: true
   })

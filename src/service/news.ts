@@ -2,20 +2,34 @@ import { openrouter } from "@openrouter/ai-sdk-provider";
 import { embed, generateText, Output } from "ai";
 import db, { schema } from "../drizzle";
 import { z } from "zod";
-import { count, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, cosineDistance, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 import env from "../env";
 
 export async function getNews({
   page = 1,
   limit = 20,
-  category
+  category,
+  search
 }: {
   page?: number;
   limit?: number;
   category?: string;
+  search?: string;
 } = {}) {
   const offset = (page - 1) * limit;
-  const whereClause = category ? eq(schema.news.category, category) : undefined;
+
+  let similarity: ReturnType<typeof sql<number>> | undefined;
+  if (search) {
+    const embedding = await createEmbeddings(search);
+    similarity = sql<number>`1 - (${cosineDistance(schema.news.embedding, embedding)})`;
+  }
+
+  const categoryClause = category
+    ? eq(schema.news.category, category)
+    : undefined;
+  const searchClause = similarity ? sql`${similarity} > 0.5` : undefined;
+
+  const whereClause = and(categoryClause, searchClause) ?? undefined;
 
   const [data, [total]] = await Promise.all([
     db
@@ -26,11 +40,12 @@ export async function getNews({
         category: schema.news.category,
         content: schema.news.content,
         summary: schema.news.summary,
-        publishedAt: schema.news.publishedAt
+        publishedAt: schema.news.publishedAt,
+        ...(similarity ? { similarity } : {})
       })
       .from(schema.news)
       .where(whereClause)
-      .orderBy(desc(schema.news.publishedAt))
+      .orderBy(similarity ? desc(similarity) : desc(schema.news.publishedAt))
       .limit(limit)
       .offset(offset),
     db.select({ total: count() }).from(schema.news).where(whereClause)
@@ -54,7 +69,7 @@ export async function getCategories() {
   return rows.map((r) => r.category);
 }
 
-async function createEmbeddings(value: string) {
+export async function createEmbeddings(value: string) {
   const { embedding } = await embed({
     model: openrouter.textEmbeddingModel("openai/text-embedding-3-small"),
     value

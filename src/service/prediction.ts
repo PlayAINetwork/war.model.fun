@@ -3,7 +3,7 @@ import { and, cosineDistance, count, desc, eq, isNull, sql } from "drizzle-orm";
 import { openrouter } from "@openrouter/ai-sdk-provider";
 import { generateText, hasToolCall, Output, tool } from "ai";
 import { z } from "zod";
-import { createEmbeddings, getNews } from "./news";
+import { createEmbeddings, getCategories, getNews } from "./news";
 import { HTTPException } from "hono/http-exception";
 import env from "../env";
 
@@ -338,31 +338,40 @@ async function runPredictionTask({
   modelId: number;
   modelProvider: keyof typeof MODEL_PROVIDER;
   model: string;
-  lastRunAt?: Date | null;
+  lastRunAt?: Record<string, string> | null;
 }) {
   console.log(`Running prediction task for model ${modelId}`);
   const provider = MODEL_PROVIDER[modelProvider];
 
-  const { data: news } = await getNews({
-    limit: 300,
-    after: lastRunAt
-  });
+  // Group news fetch by category to apply per-category lastRunAt
+  const categories = await getCategories();
 
-  if (!news.length) {
+  const newsByCategory: Record<
+    string,
+    Awaited<ReturnType<typeof getNews>>["data"]
+  > = {};
+
+  for (const category of categories) {
+    const categoryLastRun = lastRunAt?.[category];
+    const { data: categoryNews } = await getNews({
+      limit: 50,
+      category,
+      after: categoryLastRun ? new Date(categoryLastRun) : undefined
+    });
+
+    if (categoryNews.length > 0) {
+      newsByCategory[category] = categoryNews;
+    }
+  }
+
+  if (Object.keys(newsByCategory).length === 0) {
     console.log(
       `No new news articles found for model ${modelId}. Skipping prediction.`
     );
-    return;
+    return [];
   }
 
-  const newsByCategory = news.reduce(
-    (acc, item) => {
-      if (!acc[item.category]) acc[item.category] = [];
-      acc[item.category]!.push(item);
-      return acc;
-    },
-    {} as Record<string, typeof news>
-  );
+  let currentLastRunAt = lastRunAt || {};
 
   for (const [category, categoryNews] of Object.entries(newsByCategory)) {
     console.log(
@@ -577,6 +586,13 @@ Act decisively. Do not ask questions. Execute the process.`;
     console.log(
       `Finished processing category ${category} for model ${modelId}, history length: ${history.length}`
     );
+
+    currentLastRunAt[category] = new Date().toISOString();
+
+    await db
+      .update(schema.model)
+      .set({ lastRunAt: currentLastRunAt })
+      .where(eq(schema.model.id, modelId));
   }
 }
 
@@ -589,13 +605,8 @@ async function runAllPredictionTasks() {
         modelId: model.id,
         modelProvider: model.provider,
         model: model.providerModelId,
-        lastRunAt: model.lastRunAt
+        lastRunAt: model.lastRunAt as Record<string, string> | null
       });
-
-      await db
-        .update(schema.model)
-        .set({ lastRunAt: new Date() })
-        .where(eq(schema.model.id, model.id));
     } catch (e) {
       console.error(`Error running prediction task for model ${model.id}:`, e);
     } finally {

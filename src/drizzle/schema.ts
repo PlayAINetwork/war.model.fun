@@ -1,22 +1,16 @@
-import {
-  index,
-  integer,
-  pgEnum,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  vector
-} from "drizzle-orm/pg-core";
+import { index, integer, pgEnum, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
 
 export const provider = pgEnum("provider", ["openrouter"]);
 
 export const model = pgTable("model", {
-  id: text("id").primaryKey(),
+  id: serial("id").primaryKey(),
   name: text("name").notNull(),
   provider: provider("provider").notNull(),
+  providerModelId: text("provider_model_id").notNull(),
+  image: text("image").notNull(),
   score: integer("score").notNull().default(0),
   maxScore: integer("max_score").notNull().default(0),
+  creator: text("creator").notNull(),
   createdAt: timestamp("created_at", {
     withTimezone: true
   })

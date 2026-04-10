@@ -28,27 +28,43 @@ export async function getModelHistory({
   modelId,
   limit = 20,
   page = 1,
-  onlyInsights = false
+  onlyInsights = false,
+  search
 }: {
   modelId?: number;
   limit?: number;
   page?: number;
   onlyInsights?: boolean;
+  search?: string;
 }) {
   const offset = (page - 1) * limit;
+
+  let similarity: ReturnType<typeof sql<number>> | undefined;
+  if (search) {
+    const embedding = await createEmbeddings(search);
+    similarity = sql<number>`1 - (${cosineDistance(schema.history.embedding, embedding)})`;
+  }
 
   const conditions = [];
   if (modelId) conditions.push(eq(schema.history.modelId, modelId));
   if (onlyInsights) conditions.push(eq(schema.history.tool, "insight"));
+  if (similarity) conditions.push(sql`${similarity} > 0.5`);
 
   const condition = conditions.length > 0 ? and(...conditions) : undefined;
 
   const [data, [total]] = await Promise.all([
     db
-      .select()
+      .select({
+        id: schema.history.id,
+        modelId: schema.history.modelId,
+        content: schema.history.content,
+        tool: schema.history.tool,
+        createdAt: schema.history.createdAt,
+        ...(similarity ? { similarity } : {})
+      })
       .from(schema.history)
       .where(condition)
-      .orderBy(desc(schema.history.createdAt))
+      .orderBy(similarity ? desc(similarity) : desc(schema.history.createdAt))
       .limit(limit)
       .offset(offset),
     db.select({ total: count() }).from(schema.history).where(condition)
@@ -206,6 +222,33 @@ const getSearchPredictionsTool = (modelId: number) =>
     }
   });
 
+const getSearchInsightsTool = (modelId: number) =>
+  tool({
+    description:
+      "Searches for existing insights to check for redundancy before making a new insight.",
+    inputSchema: z.object({
+      query: z.string().describe("The query to search insights for")
+    }),
+    execute: async ({ query }) => {
+      try {
+        const results = await getModelHistory({
+          search: query,
+          modelId,
+          onlyInsights: true
+        });
+        return {
+          status: "success",
+          data: results
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while searching insights: ${e}`
+        };
+      }
+    }
+  });
+
 const perplexitySearch = tool({
   description:
     "Searches the real-time internet using Perplexity Search to investigate missing crucial details, deep context, or public reactions.",
@@ -250,6 +293,24 @@ const insight = tool({
       .string()
       .describe(
         "A detailed internal thought process detailing your planning, evaluation of options, reasoning, and final plan. Format using headings and paragraphs (e.g., 'Initial Thoughts:', 'Reviewing Data:', 'Evaluating Edge:', 'Final Plan:', 'Important Details:'). Detail your step-by-step reasoning."
+      )
+  }),
+  execute: async (data) => {
+    return {
+      status: "success",
+      data
+    };
+  }
+});
+
+const stopResponse = tool({
+  description:
+    "Stops the response and exits the process if you decide not to make an insight.",
+  inputSchema: z.object({
+    reason: z
+      .string()
+      .describe(
+        "The reason for stopping the response without making an insight."
       )
   }),
   execute: async (data) => {
@@ -440,7 +501,7 @@ Maximize your score, not your prediction count. Strategic restraint is critical.
 AUTONOMY & TOOLS
 ----------------------
 You operate independently. Use tools judiciously to build overwhelming confidence:
-- getNews, getSimilarContent, perplexitySearch, searchPredictions, makePrediction, insight
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, stopResponse
 
 ----------------------
 ANALYSIS & CHAIN OF THOUGHT
@@ -463,9 +524,9 @@ Follow this exact step-by-step methodology:
 2. EXAMINE & EXPAND: Analyze the summaries provided in the news. If crucial details, context, or public reactions are missing, use \`perplexitySearch\` to investigate. (Log as: [Searching the internet])
 3. CONTEXTUALIZE: Use \`getSimilarContent\` to find related historical data and establish baselines. (Log as: [Finding similar historical context])
 4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
-5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions])
+5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions]). You should also use \`searchInsights\` before generating an insight to avoid redundancy.
 6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
-7. FINAL INSIGHT: Conclude by firing the \`insight\` tool. Provide a succinct summary and your full step-by-step chain of thought (including the bracketed action logs).
+7. FINAL INSIGHT: Conclude by firing the \`insight\` tool. Provide a succinct summary and your full step-by-step chain of thought (including the bracketed action logs). Alternatively, if there is no insight or prediction to make, use \`stopResponse\` to exit gracefully.
 
 ----------------------
 PREDICTION REQUIREMENTS
@@ -555,11 +616,13 @@ Act decisively. Do not ask questions. Execute the process.`;
       tools: {
         getSimilarContent,
         searchPredictions: getSearchPredictionsTool(modelId),
+        searchInsights: getSearchInsightsTool(modelId),
         perplexitySearch,
         makePrediction: getMakePredictionTool(modelId),
-        insight
+        insight,
+        stopResponse
       },
-      stopWhen: hasToolCall("insight"),
+      stopWhen: [hasToolCall("insight"), hasToolCall("stopResponse")],
       //@ts-ignore
       messages
     });
@@ -727,7 +790,62 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
   }
 }
 
+async function runInsightEmbedderTask() {
+  try {
+    console.log(
+      `Executing insight embedder task at ${new Date().toISOString()}`
+    );
+
+    const pendingInsights = await db
+      .select({
+        id: schema.history.id,
+        content: schema.history.content
+      })
+      .from(schema.history)
+      .where(
+        and(
+          eq(schema.history.tool, "insight"),
+          isNull(schema.history.embedding)
+        )
+      )
+      .limit(10);
+
+    if (!pendingInsights.length) {
+      return;
+    }
+
+    console.log(`Found ${pendingInsights.length} pending insights to embed.`);
+
+    for (const insight of pendingInsights) {
+      try {
+        const content = insight.content as any;
+        const textToEmbed =
+          `${content.title || ""} ${content.insight || ""}`.trim();
+
+        if (textToEmbed) {
+          const embedding = await createEmbeddings(textToEmbed);
+          await db
+            .update(schema.history)
+            .set({ embedding })
+            .where(eq(schema.history.id, insight.id));
+
+          console.log(`Embedded insight ${insight.id}`);
+        } else {
+          console.log(`Insight ${insight.id} had no valid text to embed.`);
+        }
+      } catch (e) {
+        console.error(`Error embedding insight ${insight.id}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error(`Error executing insight embedder task:`, e);
+  } finally {
+    setTimeout(runInsightEmbedderTask, 10 * 1000);
+  }
+}
+
 if (env.NODE_ENV !== "local") {
   void runAllPredictionTasks();
   void runOracleTask();
+  void runInsightEmbedderTask();
 }

@@ -58,19 +58,29 @@ export const news = pgTable(
   ]
 );
 
-export const history = pgTable("history", {
-  id: serial("id").primaryKey(),
-  modelId: integer("model_id")
-    .notNull()
-    .references(() => model.id, { onDelete: "cascade" }),
-  content: json("content").notNull(),
-  tool: text("tool").notNull(),
-  createdAt: timestamp("created_at", {
-    withTimezone: true
-  })
-    .defaultNow()
-    .notNull()
-});
+export const history = pgTable(
+  "history",
+  {
+    id: serial("id").primaryKey(),
+    modelId: integer("model_id")
+      .notNull()
+      .references(() => model.id, { onDelete: "cascade" }),
+    content: json("content").notNull(),
+    tool: text("tool").notNull(),
+    embedding: vector("embedding", { dimensions: 1536 }),
+    createdAt: timestamp("created_at", {
+      withTimezone: true
+    })
+      .defaultNow()
+      .notNull()
+  },
+  (table) => [
+    index("historyEmbeddingIndex").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops")
+    )
+  ]
+);
 
 export const predictions = pgTable("predictions", {
   id: serial("id").primaryKey(),

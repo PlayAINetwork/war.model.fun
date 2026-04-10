@@ -276,7 +276,7 @@ const perplexitySearch = tool({
 
 const insight = tool({
   description:
-    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions.",
+    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel.",
   inputSchema: z.object({
     title: z
       .string()
@@ -561,7 +561,7 @@ STRATEGY & CONSTRAINTS
 - RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war.
 ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool." : ""}
 - If news is unrelated to the US-Iran-Israel conflict, you MUST still process it for insight. Give a proper title and insight about the actual news topic. DO NOT just say it is unrelated to the war, but MAKE NO PREDICTIONS.
-- MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called.
+- MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight by using \`stopResponse\`.
 - OBJECTIVE & MEASURABLE: Bad: "The market will crash." Good: "The S&P 500 will close down at least 3% in a single day before Friday."
 - NO OBVIOUS PREDICTIONS: Do not predict routine, scheduled, or virtually guaranteed events. 
 - INSUFFICIENT DATA: If uncertain, DO NOT force a prediction. Abstain and wait.

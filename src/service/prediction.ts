@@ -1,7 +1,7 @@
 import db, { schema } from "../drizzle";
-import { and, cosineDistance, count, desc, eq, sql } from "drizzle-orm";
+import { and, cosineDistance, count, desc, eq, isNull, sql } from "drizzle-orm";
 import { openrouter } from "@openrouter/ai-sdk-provider";
-import { generateText, hasToolCall, tool } from "ai";
+import { generateText, hasToolCall, Output, tool } from "ai";
 import { z } from "zod";
 import { createEmbeddings, getNews } from "./news";
 import { HTTPException } from "hono/http-exception";
@@ -604,4 +604,113 @@ async function runAllPredictionTasks() {
   }
 }
 
-if (env.NODE_ENV !== "local") void runAllPredictionTasks();
+async function runOracleTask() {
+  try {
+    console.log(`Executing oracle task at ${new Date().toISOString()}`);
+
+    const pendingPredictions = await db
+      .select({
+        id: schema.predictions.id,
+        prediction: schema.predictions.prediction,
+        reasoning: schema.predictions.reasoning,
+        createdAt: schema.predictions.createdAt,
+        happensBefore: schema.predictions.happensBefore,
+        modelId: schema.predictions.modelId
+      })
+      .from(schema.predictions)
+      .where(
+        and(
+          isNull(schema.predictions.isCorrect),
+          sql`${schema.predictions.happensBefore} < NOW()`
+        )
+      );
+
+    if (!pendingPredictions.length) {
+      console.log("No pending predictions to verify. Oracle job will exit.");
+      return;
+    }
+
+    console.log(
+      `Found ${pendingPredictions.length} pending predictions to verify.`
+    );
+
+    for (const prediction of pendingPredictions) {
+      try {
+        const { output } = await generateText({
+          model: openrouter("perplexity/sonar-pro-search"),
+          output: Output.object({
+            schema: z.object({
+              isCorrect: z
+                .number()
+                .nullable()
+                .describe(
+                  "The score of the prediction. Return 10 if event type matches AND occurs within predicted time window. Return 5 if event type matches BUT outside predicted time window. Return 0 if event type does not occur within max evaluation window. Return null if no conclusive news yet and the max evaluation window hasn't passed."
+                ),
+              outcomeReasoning: z
+                .string()
+                .nullable()
+                .describe(
+                  "The reasoning based on your sources on why the prediction outcome is correct, incorrect or still pending."
+                ),
+              sources: z
+                .array(z.string())
+                .describe(
+                  "The URLs or sources that confirm whether the prediction came true. This should be a list of credible sources that provide evidence for the outcome of the prediction. If no sources are found, return an empty array."
+                )
+            })
+          }),
+          prompt: `You are an oracle web search agent. Your task is to verify if a prediction came true. 
+You MUST use your web search capabilities to check if the event occurred exactly between the predicted time and the deadline time.
+
+Prediction: ${prediction.prediction}
+Reasoning used when predicting: ${prediction.reasoning}
+Prediction Date: ${prediction.createdAt?.toISOString()}
+Deadline: ${prediction.happensBefore?.toISOString()}
+
+Determine if the event occurred based on these criteria:
+- 10 points: If event type matches AND occurs within predicted time window
+- 5 points: If event type matches BUT outside predicted time window
+- 0 points: If event type does not occur within max evaluation window
+
+Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If there is no conclusive news yet AND the max evaluation window has not passed, return null.`
+        });
+
+        if (output.isCorrect !== null) {
+          await db
+            .update(schema.predictions)
+            .set({
+              isCorrect: output.isCorrect,
+              outcomeSources: output.sources,
+              outcomeReasoning: output.outcomeReasoning
+            })
+            .where(eq(schema.predictions.id, prediction.id));
+
+          console.log(
+            `Updated prediction ${prediction.id} to score ${output.isCorrect}`
+          );
+
+          await db
+            .update(schema.model)
+            .set({
+              score: sql`${schema.model.score} + ${output.isCorrect}`,
+              maxScore: sql`${schema.model.maxScore} + 10`
+            })
+            .where(eq(schema.model.id, prediction.modelId!));
+        } else {
+          console.log(`Prediction ${prediction.id} is still pending.`);
+        }
+      } catch (e) {
+        console.error(`Error verifying prediction ${prediction.id}:`, e);
+      }
+    }
+  } catch (e) {
+    console.error(`Error executing oracle task:`, e);
+  } finally {
+    setTimeout(runOracleTask, 5 * 60 * 1000);
+  }
+}
+
+if (env.NODE_ENV !== "local") {
+  void runAllPredictionTasks();
+  void runOracleTask();
+}

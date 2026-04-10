@@ -44,7 +44,7 @@ app.get(
 );
 
 app.get(
-  "/predictions",
+  "/",
   zValidator(
     "query",
     paginationSchema.extend({ id: z.coerce.number().optional() })

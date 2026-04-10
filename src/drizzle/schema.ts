@@ -1,13 +1,4 @@
-import {
-  index,
-  integer,
-  pgEnum,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  vector
-} from "drizzle-orm/pg-core";
+import { index, integer, json, pgEnum, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
 
 export const provider = pgEnum("provider", ["openrouter"]);
 
@@ -58,3 +49,43 @@ export const news = pgTable(
     )
   ]
 );
+
+export const history = pgTable("history", {
+  id: serial("id").primaryKey(),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => model.id, { onDelete: "cascade" }),
+  content: json("content").notNull(),
+  tool: text("tool").notNull(),
+  createdAt: timestamp("created_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull()
+});
+
+export const predictions = pgTable("predictions", {
+  id: serial("id").primaryKey(),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => model.id, { onDelete: "cascade" }),
+  prediction: text("prediction").notNull(),
+  reasoning: text("reasoning").notNull(),
+  happensBefore: timestamp("happens_before", {
+    withTimezone: true
+  }).notNull(),
+  confidence: integer("confidence").notNull(),
+  embedding: vector("embedding", { dimensions: 1536 }),
+  isCorrect: integer("is_correct"),
+  sources: json("sources").$type<string[]>().notNull(),
+  outcomeSources: json("outcome_sources")
+    .$type<string[]>()
+    .notNull()
+    .default([]),
+  outcomeReasoning: text("outcome_reasoning"),
+  createdAt: timestamp("created_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull()
+});

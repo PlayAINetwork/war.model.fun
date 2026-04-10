@@ -1,10 +1,60 @@
 import { Hono } from "hono";
 import { PredictionService } from "../service";
+import { zValidator } from "@hono/zod-validator";
+import { paginationSchema } from "../util";
+import { z } from "zod";
 
 const app = new Hono();
 
 app.get("/models", async (c) => {
   return c.json(await PredictionService.getModels());
 });
+
+app.get(
+  "/history",
+  zValidator(
+    "query",
+    paginationSchema.extend({ id: z.coerce.number().optional() })
+  ),
+  async (c) => {
+    const { page, limit, id } = c.req.valid("query");
+    return c.json(
+      await PredictionService.getModelHistory({ modelId: id, page, limit })
+    );
+  }
+);
+
+app.get(
+  "/insights",
+  zValidator(
+    "query",
+    paginationSchema.extend({ id: z.coerce.number().optional() })
+  ),
+  async (c) => {
+    const { page, limit, id } = c.req.valid("query");
+    return c.json(
+      await PredictionService.getModelHistory({
+        modelId: id,
+        page,
+        limit,
+        onlyInsights: true
+      })
+    );
+  }
+);
+
+app.get(
+  "/predictions",
+  zValidator(
+    "query",
+    paginationSchema.extend({ id: z.coerce.number().optional() })
+  ),
+  async (c) => {
+    const { page, limit, id } = c.req.valid("query");
+    return c.json(
+      await PredictionService.getModelPredictions({ modelId: id, page, limit })
+    );
+  }
+);
 
 export default app;

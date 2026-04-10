@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { NewsRouter, PredictionRouter } from "./route";
 import { serveStatic } from "hono/bun";
+import env from "./env";
+import { showRoutes } from "hono/dev";
 
 const app = new Hono();
 
@@ -11,5 +13,9 @@ app.use(cors());
 
 app.route("/news", NewsRouter);
 app.route("/prediction", PredictionRouter);
+
+if (env.NODE_ENV === "local") {
+  showRoutes(app);
+}
 
 export default app;

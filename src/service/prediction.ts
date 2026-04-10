@@ -832,7 +832,7 @@ async function runInsightEmbedderTask() {
   }
 }
 
-if (env.NODE_ENV === "local") {
+if (env.NODE_ENV !== "local") {
   void runAllPredictionTasks();
   void runOracleTask();
 }

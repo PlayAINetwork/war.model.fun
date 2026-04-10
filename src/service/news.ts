@@ -9,12 +9,14 @@ export async function getNews({
   page = 1,
   limit = 20,
   category,
-  search
+  search,
+  after
 }: {
   page?: number;
   limit?: number;
   category?: string;
   search?: string;
+  after?: Date | null;
 } = {}) {
   const offset = (page - 1) * limit;
 
@@ -28,8 +30,12 @@ export async function getNews({
     ? eq(schema.news.category, category)
     : undefined;
   const searchClause = similarity ? sql`${similarity} > 0.5` : undefined;
+  const afterClause = after
+    ? sql`${schema.news.publishedAt} > ${after}`
+    : undefined;
 
-  const whereClause = and(categoryClause, searchClause) ?? undefined;
+  const whereClause =
+    and(categoryClause, searchClause, afterClause) ?? undefined;
 
   const [data, [total]] = await Promise.all([
     db
@@ -223,5 +229,4 @@ async function runNewsJob() {
     }
   }
 }
-
-void runNewsJob();
+if (env.NODE_ENV !== "local") void runNewsJob();

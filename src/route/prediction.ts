@@ -57,4 +57,13 @@ app.get(
   }
 );
 
+app.get(
+  "/stats",
+  zValidator("query", z.object({ id: z.coerce.number() })),
+  async (c) => {
+    const { id } = c.req.valid("query");
+    return c.json(await PredictionService.getModelStats(id));
+  }
+);
+
 export default app;

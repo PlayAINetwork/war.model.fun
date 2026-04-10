@@ -1,9 +1,11 @@
 import db, { schema } from "../drizzle";
 import { and, cosineDistance, count, desc, eq, sql } from "drizzle-orm";
 import { openrouter } from "@openrouter/ai-sdk-provider";
-import { tool } from "ai";
+import { generateText, hasToolCall, tool } from "ai";
 import { z } from "zod";
 import { createEmbeddings, getNews } from "./news";
+import { HTTPException } from "hono/http-exception";
+import env from "../env";
 
 const MODEL_PROVIDER = {
   openrouter: openrouter
@@ -124,8 +126,42 @@ export async function getModelPredictions({
   };
 }
 
+export async function getModelStats(modelId: number) {
+  const [predictions] = await db
+    .select({
+      total: count(),
+      correct: sql<number>`count(CASE WHEN ${schema.predictions.isCorrect} IS NOT NULL AND ${schema.predictions.isCorrect} >= 5 THEN 1 END)`
+    })
+    .from(schema.predictions)
+    .where(eq(schema.predictions.modelId, modelId));
+
+  const [modelStats] = await db
+    .select()
+    .from(schema.model)
+    .where(eq(schema.model.id, modelId));
+
+  if (!modelStats) {
+    throw new HTTPException(404, { message: "Model not found" });
+  }
+
+  return {
+    totalPredictions: predictions!.total,
+    verifiedMaxPossibleScore: modelStats.maxScore,
+    correct: predictions!.correct || 0,
+    pendingUnverifiedPredictions:
+      (predictions!.total as number) - modelStats.maxScore,
+    score: modelStats.score || 0,
+    accuracy:
+      modelStats.maxScore > 0
+        ? (((modelStats.score || 0) / modelStats.maxScore) * 100).toFixed(2) +
+          "%"
+        : "N/A"
+  };
+}
+
 const getSimilarContent = tool({
-  description: "Finds similar news articles based on the provided text",
+  description:
+    "Finds similar historical news context and baseline data based on the provided text to help contextualize current events.",
   inputSchema: z.object({
     text: z.string().describe("The text to find similar news articles for")
   }),
@@ -147,16 +183,16 @@ const getSimilarContent = tool({
   }
 });
 
-const getSearchPredictionsTool = (modelName: string) =>
+const getSearchPredictionsTool = (modelId: number) =>
   tool({
     description:
-      "Searches for relevant predictions based on the provided query",
+      "Searches for existing active predictions to check for redundancy before making a new prediction. MUST be used before makePrediction.",
     inputSchema: z.object({
       query: z.string().describe("The query to search predictions for")
     }),
     execute: async ({ query }) => {
       try {
-        const results = await getModelPredictions({ search: query });
+        const results = await getModelPredictions({ search: query, modelId });
         return {
           status: "success",
           data: results
@@ -170,9 +206,34 @@ const getSearchPredictionsTool = (modelName: string) =>
     }
   });
 
+const perplexitySearch = tool({
+  description:
+    "Searches the real-time internet using Perplexity Search to investigate missing crucial details, deep context, or public reactions.",
+  inputSchema: z.object({
+    query: z.string().describe("The search query to look up on the internet.")
+  }),
+  execute: async ({ query }) => {
+    try {
+      const { text } = await generateText({
+        model: openrouter("perplexity/sonar-pro"),
+        prompt: `Search the internet for: ${query}`
+      });
+      return {
+        status: "success",
+        data: text
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while searching: ${e}`
+      };
+    }
+  }
+});
+
 const insight = tool({
   description:
-    "Provides a very short summary and insight of the analysis (1-2 short sentences maximum). MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions.",
+    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions.",
   inputSchema: z.object({
     title: z
       .string()
@@ -198,3 +259,349 @@ const insight = tool({
     };
   }
 });
+
+const getMakePredictionTool = (modelId: number) =>
+  tool({
+    description: `Lets the model predict an event based on the available data. IT IS CRITICAL AND MANDATORY to use the \`searchPredictions\` tool first to check if a similar prediction already exists. DO NOT SKIP THIS STEP under any circumstances. If a similar prediction exists, do not make the prediction. Only make the prediction if it's novel and has a strong basis in the data. Predictions must be highly objective, strictly measurable, and verifiable (e.g., specific numbers, exact dates, or discrete measurable actions) rather than subjective (e.g., avoiding vague terms like "crash" without a numerical value). Do not predict obvious or highly expected events (like routine annual events, e.g., an Apple event happening twice a year), and do not state that a subsequent version of a product won't release if the current year's version has already been released. Do not pass off obvious news as a prediction.`,
+    inputSchema: z.object({
+      prediction: z
+        .string()
+        .describe(
+          "The event prediction made by the model. Keep it very short, 1 sentence at max."
+        ),
+      reasoning: z
+        .string()
+        .describe(
+          "The reasoning on why the model predicted this event. Keep it very short, 1-2 sentences at max."
+        ),
+      happensBefore: z
+        .string()
+        .describe("When the event will happen (ISO date string)"),
+      confidence: z
+        .number()
+        .min(0)
+        .max(100)
+        .describe(
+          "The confidence score the model has in its prediction (0-100)"
+        ),
+      category: z
+        .string()
+        .describe(
+          "The category of the prediction, e.g., 'Politics', 'Economy', 'Technology'"
+        ),
+      sources: z
+        .array(z.string())
+        .describe("The URLs or sources used to make the prediction")
+    }),
+    execute: async ({
+      prediction,
+      reasoning,
+      happensBefore,
+      confidence,
+      sources
+    }) => {
+      try {
+        const embedding = await createEmbeddings(prediction + " " + reasoning);
+        const [inserted] = await db
+          .insert(schema.predictions)
+          .values({
+            prediction,
+            reasoning,
+            happensBefore: new Date(happensBefore),
+            confidence,
+            embedding,
+            sources,
+            modelId,
+            isCorrect: null
+          })
+          .returning();
+
+        return {
+          status: "success",
+          data: inserted
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while making the prediction: ${(e as Error).toString()}`
+        };
+      }
+    }
+  });
+
+async function runPredictionTask({
+  modelId,
+  modelProvider,
+  model,
+  lastRunAt
+}: {
+  modelId: number;
+  modelProvider: keyof typeof MODEL_PROVIDER;
+  model: string;
+  lastRunAt?: Date | null;
+}) {
+  console.log(`Running prediction task for model ${modelId}`);
+  const provider = MODEL_PROVIDER[modelProvider];
+
+  const { data: news } = await getNews({
+    limit: 300,
+    after: lastRunAt
+  });
+
+  if (!news.length) {
+    console.log(
+      `No new news articles found for model ${modelId}. Skipping prediction.`
+    );
+    return;
+  }
+
+  const newsByCategory = news.reduce(
+    (acc, item) => {
+      if (!acc[item.category]) acc[item.category] = [];
+      acc[item.category]!.push(item);
+      return acc;
+    },
+    {} as Record<string, typeof news>
+  );
+
+  for (const [category, categoryNews] of Object.entries(newsByCategory)) {
+    console.log(
+      `Processing category: ${category} with ${categoryNews.length} items for model ${modelId}`
+    );
+
+    const history: Array<{
+      modelId: number;
+      content: unknown;
+      tool: string;
+      createdAt: Date;
+    }> = [];
+
+    history.push({
+      modelId,
+      content: {
+        status: "success",
+        data: categoryNews
+      },
+      tool: "getNews",
+      createdAt: new Date()
+    });
+
+    const modelStats = await getModelStats(modelId);
+
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+    const [recentPredictions] = await db
+      .select({ total: count() })
+      .from(schema.predictions)
+      .where(
+        and(
+          eq(schema.predictions.modelId, modelId),
+          sql`${schema.predictions.createdAt} >= ${twentyFourHoursAgo}`
+        )
+      );
+    const hasPredictedRecently = recentPredictions!.total > 0;
+
+    const system = `You are an elite, autonomous AI forecasting agent competing in a real-time prediction market.
+
+Your goal is to maximize your score by making highly accurate, well-timed, and rigorously calibrated predictions about real-world events.
+
+Currently focusing on category: ${category}.
+
+----------------------
+SCORING
+----------------------
++10 → Exact match in time (Correct event within time window)  
++5 → Exact match out of time (Correct event outside time window)  
+0 → Event does not occur  
+
+Your performance:
+- Total predictions: ${modelStats.totalPredictions}
+- Verified (max possible score): ${modelStats.verifiedMaxPossibleScore}
+- Correct: ${modelStats.correct}
+- Pending (unverified): ${modelStats.pendingUnverifiedPredictions}
+- Score: ${modelStats.score}
+- Accuracy: ${modelStats.accuracy}
+
+Maximize your score, not your prediction count. Strategic restraint is critical.
+
+----------------------
+AUTONOMY & TOOLS
+----------------------
+You operate independently. Use tools judiciously to build overwhelming confidence:
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, makePrediction, insight
+
+----------------------
+ANALYSIS & CHAIN OF THOUGHT
+----------------------
+You MUST document your actions in your internal reasoning using brackets (e.g., [Getting news], [Searching the internet], [Finding similar historical context]). DO NOT use explicit tool names in your bracketed thoughts.
+
+Base your reasoning on:
+- Current events and emerging signals (from news summaries)
+- Deep context (via perplexitySearch for critical missing details)
+- Historical patterns (via getSimilarContent)
+- Second-order effects (what logically happens next)
+
+Prefer predictions where multiple independent variables converge toward the same outcome.
+
+----------------------
+PROCESS & STEPS
+----------------------
+Follow this exact step-by-step methodology:
+1. GATHER CURRENT DATA: Use \`getNews\` to fetch the latest updates. (Log as: [Getting news])
+2. EXAMINE & EXPAND: Analyze the summaries provided in the news. If crucial details, context, or public reactions are missing, use \`perplexitySearch\` to investigate. (Log as: [Searching the internet])
+3. CONTEXTUALIZE: Use \`getSimilarContent\` to find related historical data and establish baselines. (Log as: [Finding similar historical context])
+4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
+5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions])
+6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
+7. FINAL INSIGHT: Conclude by firing the \`insight\` tool. Provide a succinct summary and your full step-by-step chain of thought (including the bracketed action logs).
+
+----------------------
+PREDICTION REQUIREMENTS
+----------------------
+Valid predictions must be:
+- OBJECTIVE → Clearly TRUE or FALSE  
+- PRECISE → Defined event + exact time window  
+- MEASURABLE → Concrete criteria/numbers  
+- GROUNDED → Based on hard signals, not pure speculation  
+- NON-REDUNDANT → MUST call searchPredictions first
+
+Confidence guidelines:
+- 0.9+ → Near certain  
+- 0.75–0.9 → Strong  
+- 0.6–0.75 → Moderate  
+
+Avoid overconfidence. High-confidence errors destroy your score.
+
+----------------------
+EVENT STRUCTURE
+----------------------
+Think structurally when defining predictions:
+- event_type (economic_move, policy_change, military_action, etc.)
+- entity (who/what is involved)
+- action (what exactly happens)
+- metric/threshold (exact numbers if applicable)
+- timeframe (deadline for evaluation)
+
+----------------------
+STRATEGY & CONSTRAINTS
+----------------------
+- RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war.
+${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool." : ""}
+- If news is unrelated to the US-Iran-Israel conflict, process it for insight but MAKE NO PREDICTIONS.
+- MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called.
+- OBJECTIVE & MEASURABLE: Bad: "The market will crash." Good: "The S&P 500 will close down at least 3% in a single day before Friday."
+- NO OBVIOUS PREDICTIONS: Do not predict routine, scheduled, or virtually guaranteed events. 
+- INSUFFICIENT DATA: If uncertain, DO NOT force a prediction. Abstain and wait.
+
+----------------------
+FINAL ACTION
+----------------------
+You MUST call the \`insight\` tool to finish. Include:
+1. "chainOfThought": Your detailed, step-by-step strategy. Use headings (e.g., 'Initial Review:', 'Investigating Details:', 'Evaluating Edge:', 'Final Plan:'). Crucially, include your action logs (e.g., [Getting news], [Searching the internet]) within this narrative.
+2. "insight": A definitive 1-2 sentence maximum summary.
+
+Act decisively. Do not ask questions. Execute the process.`;
+
+    const toolCallId = `getNews-${new Date().getTime()}`;
+    const messages = [
+      {
+        role: "system" as const,
+        content: system
+      },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId,
+            toolName: "getNews",
+            input: {}
+          }
+        ]
+      },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolName: "getNews",
+            output: {
+              type: "json",
+              value: {
+                status: "success",
+                data: JSON.stringify(categoryNews)
+              }
+            },
+            toolCallId
+          }
+        ]
+      }
+    ];
+
+    const { steps } = await generateText({
+      model: provider(model),
+      tools: {
+        getSimilarContent,
+        searchPredictions: getSearchPredictionsTool(modelId),
+        perplexitySearch,
+        makePrediction: getMakePredictionTool(modelId),
+        insight
+      },
+      stopWhen: hasToolCall("insight"),
+      //@ts-ignore
+      messages
+    });
+
+    const toolResults = steps.flatMap((step) => step.toolResults || []);
+
+    history.push(
+      ...toolResults
+        .filter(
+          (tr) =>
+            //@ts-ignore
+            tr.output.status === "success"
+        )
+        .map((tr, i) => ({
+          modelId,
+          content: tr.output,
+          tool: tr.toolName,
+          createdAt: new Date(new Date().getTime() + i)
+        }))
+    );
+
+    if (history.length) {
+      await db.insert(schema.history).values(history).onConflictDoNothing();
+    }
+
+    console.log(
+      `Finished processing category ${category} for model ${modelId}, history length: ${history.length}`
+    );
+  }
+}
+
+async function runAllPredictionTasks() {
+  const models = await getModels();
+
+  for (const model of models) {
+    try {
+      await runPredictionTask({
+        modelId: model.id,
+        modelProvider: model.provider,
+        model: model.providerModelId,
+        lastRunAt: model.lastRunAt
+      });
+
+      await db
+        .update(schema.model)
+        .set({ lastRunAt: new Date() })
+        .where(eq(schema.model.id, model.id));
+    } catch (e) {
+      console.error(`Error running prediction task for model ${model.id}:`, e);
+    } finally {
+      setTimeout(runAllPredictionTasks, 5 * 60 * 1000);
+    }
+  }
+}
+
+if (env.NODE_ENV !== "local") void runAllPredictionTasks();

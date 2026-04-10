@@ -558,7 +558,7 @@ Think structurally when defining predictions:
 ----------------------
 STRATEGY & CONSTRAINTS
 ----------------------
-- RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war.
+- RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war. So you can call \`makePrediction\` only once while processing this batch of news. 
 ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool." : ""}
 - If news is unrelated to the US-Iran-Israel conflict, you MUST still process it for insight. Give a proper title and insight about the actual news topic. DO NOT just say it is unrelated to the war, but MAKE NO PREDICTIONS.
 - MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight by using \`stopResponse\`.

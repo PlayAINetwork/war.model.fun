@@ -820,7 +820,7 @@ async function runInsightEmbedderTask() {
       try {
         const content = insight.content as any;
         const textToEmbed =
-          `${content.title || ""} ${content.insight || ""}`.trim();
+          `${content.data.title || ""} ${content.data.insight || ""}`.trim();
 
         if (textToEmbed) {
           const embedding = await createEmbeddings(textToEmbed);

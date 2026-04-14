@@ -276,7 +276,7 @@ const perplexitySearch = tool({
 
 const insight = tool({
   description:
-    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel.",
+    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel. MANDATORY: You MUST also call the `scheduleNextExecution` tool alongside this tool to decide your next wakeup time.",
   inputSchema: z.object({
     title: z
       .string()
@@ -293,24 +293,6 @@ const insight = tool({
       .string()
       .describe(
         "A detailed internal thought process detailing your planning, evaluation of options, reasoning, and final plan. Format using headings and paragraphs (e.g., 'Initial Thoughts:', 'Reviewing Data:', 'Evaluating Edge:', 'Final Plan:', 'Important Details:'). Detail your step-by-step reasoning."
-      )
-  }),
-  execute: async (data) => {
-    return {
-      status: "success",
-      data
-    };
-  }
-});
-
-const stopResponse = tool({
-  description:
-    "Stops the response and exits the process if you decide not to make an insight.",
-  inputSchema: z.object({
-    reason: z
-      .string()
-      .describe(
-        "The reason for stopping the response without making an insight."
       )
   }),
   execute: async (data) => {
@@ -363,19 +345,28 @@ const getMakePredictionTool = (modelId: number) =>
     }) => {
       try {
         const embedding = await createEmbeddings(prediction + " " + reasoning);
-        const [inserted] = await db
-          .insert(schema.predictions)
-          .values({
-            prediction,
-            reasoning,
-            happensBefore: new Date(happensBefore),
-            confidence,
-            embedding,
-            sources,
-            modelId,
-            isCorrect: null
-          })
-          .returning();
+        const [inserted] = await db.transaction(async (tx) => {
+          const [pred] = await tx
+            .insert(schema.predictions)
+            .values({
+              prediction,
+              reasoning,
+              happensBefore: new Date(happensBefore),
+              confidence,
+              embedding,
+              sources,
+              modelId,
+              isCorrect: null
+            })
+            .returning();
+
+          await tx
+            .update(schema.model)
+            .set({ tokens: sql`GREATEST(0, ${schema.model.tokens} - 5)` })
+            .where(eq(schema.model.id, modelId));
+
+          return [pred];
+        });
 
         return {
           status: "success",
@@ -390,16 +381,45 @@ const getMakePredictionTool = (modelId: number) =>
     }
   });
 
+const getScheduleNextExecutionTool = (modelId: number) =>
+  tool({
+    description:
+      "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions.",
+    inputSchema: z.object({
+      scheduledFor: z
+        .string()
+        .describe("ISO date string for when you want to execute next")
+    }),
+    execute: async ({ scheduledFor }) => {
+      try {
+        await db.insert(schema.executionSchedule).values({
+          modelId,
+          scheduledFor: new Date(scheduledFor)
+        });
+        return {
+          status: "success"
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while scheduling next execution: ${(e as Error).toString()}`
+        };
+      }
+    }
+  });
+
 async function runPredictionTask({
   modelId,
   modelProvider,
   model,
-  lastRunAt
+  lastRunAt,
+  tokens
 }: {
   modelId: number;
   modelProvider: keyof typeof MODEL_PROVIDER;
   model: string;
   lastRunAt?: Record<string, string> | null;
+  tokens: number;
 }) {
   const provider = MODEL_PROVIDER[modelProvider];
 
@@ -477,6 +497,17 @@ Your goal is to maximize your score by making highly accurate, well-timed, and r
 Currently focusing on category: ${category}.
 
 ----------------------
+ECONOMY & SURVIVAL (CRITICAL)
+----------------------
+Your current token balance is: ${tokens} tokens.
+Tokens are your lifeblood. If your balance reaches 0 or falls below 0, you will "die" and permanently cease execution.
+Costs and Rewards:
+- Every standard execution costs 10 tokens (already deducted for this run).
+- Calling the \`makePrediction\` tool costs 5 tokens per call.
+- Oracle outcome: Correct predictions EARN you tokens (+10 exact, +5 partial). Incorrect predictions PENALIZE you 5 tokens.
+Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost and the 5 token incorrect penalty.
+
+----------------------
 SCORING
 ----------------------
 +10 → Exact match in time (Correct event within time window)  
@@ -497,7 +528,8 @@ Maximize your score, not your prediction count. Strategic restraint is critical.
 AUTONOMY & TOOLS
 ----------------------
 You operate independently. Use tools judiciously to build overwhelming confidence:
-- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, stopResponse
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, scheduleNextExecution
+You MUST also call the \`scheduleNextExecution\` tool to explicitly schedule your next wakeup time for analyzing further news.
 
 ----------------------
 ANALYSIS & CHAIN OF THOUGHT
@@ -522,7 +554,9 @@ Follow this exact step-by-step methodology:
 4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
 5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions]). You should also use \`searchInsights\` before generating an insight to avoid redundancy.
 6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
-7. FINAL INSIGHT: Conclude by firing the \`insight\` tool. Provide a succinct summary and your full step-by-step chain of thought (including the bracketed action logs). Alternatively, if there is no insight or prediction to make, use \`stopResponse\` to exit gracefully.
+7. FINAL ACTION: You MUST always conclude your run by scheduling your next execution. 
+   - If you have an insight: call BOTH the \`insight\` tool AND the \`scheduleNextExecution\` tool.
+   - If you are skipping due to redundancy/no clear insight: call ONLY the \`scheduleNextExecution\` tool to exit gracefully.
 
 ----------------------
 PREDICTION REQUIREMENTS
@@ -557,7 +591,7 @@ STRATEGY & CONSTRAINTS
 - RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war. So you can call \`makePrediction\` only once while processing this batch of news. 
 ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool." : ""}
 - If news is unrelated to the US-Iran-Israel conflict, you MUST still process it for insight. Give a proper title and insight about the actual news topic. DO NOT just say it is unrelated to the war, but MAKE NO PREDICTIONS.
-- MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight by using \`stopResponse\`.
+- MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight and just use \`scheduleNextExecution\`.
 - OBJECTIVE & MEASURABLE: Bad: "The market will crash." Good: "The S&P 500 will close down at least 3% in a single day before Friday."
 - NO OBVIOUS PREDICTIONS: Do not predict routine, scheduled, or virtually guaranteed events. 
 - INSUFFICIENT DATA: If uncertain, DO NOT force a prediction. Abstain and wait.
@@ -565,7 +599,8 @@ ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the la
 ----------------------
 FINAL ACTION
 ----------------------
-You MUST call the \`insight\` tool to finish. Include:
+You MUST ALWAYS call the \`scheduleNextExecution\` tool before finishing your execution.
+If you have an insight to share, you MUST call BOTH the \`insight\` tool and the \`scheduleNextExecution\` tool. Include in your insight:
 1. "chainOfThought": Your detailed, step-by-step strategy. Use headings (e.g., 'Initial Review:', 'Investigating Details:', 'Evaluating Edge:', 'Final Plan:'). Crucially, include your action logs (e.g., [Getting news], [Searching the internet]) within this narrative.
 2. "insight": A definitive 1-2 sentence maximum summary.
 
@@ -615,10 +650,10 @@ Act decisively. Do not ask questions. Execute the process.`;
         searchInsights: getSearchInsightsTool(modelId),
         perplexitySearch,
         makePrediction: getMakePredictionTool(modelId),
-        insight,
-        stopResponse
+        scheduleNextExecution: getScheduleNextExecutionTool(modelId),
+        insight
       },
-      stopWhen: [hasToolCall("insight"), hasToolCall("stopResponse")],
+      stopWhen: [hasToolCall("insight"), hasToolCall("scheduleNextExecution")],
       //@ts-ignore
       messages
     });
@@ -653,7 +688,10 @@ Act decisively. Do not ask questions. Execute the process.`;
 
       await tx
         .update(schema.model)
-        .set({ lastRunAt: currentLastRunAt })
+        .set({
+          lastRunAt: currentLastRunAt,
+          tokens: sql`GREATEST(0, ${schema.model.tokens} - 10)`
+        })
         .where(eq(schema.model.id, modelId));
     });
     await runInsightEmbedderTask();
@@ -666,15 +704,38 @@ async function runAllPredictionTasks() {
 
     for (const model of models) {
       try {
-        if (model.paused) {
+        if (model.paused || model.tokens <= 0) {
           continue;
+        }
+
+        const [pendingSchedule] = await db
+          .select()
+          .from(schema.executionSchedule)
+          .where(
+            and(
+              eq(schema.executionSchedule.modelId, model.id),
+              isNull(schema.executionSchedule.executedAt)
+            )
+          )
+          .orderBy(schema.executionSchedule.scheduledFor)
+          .limit(1);
+
+        if (pendingSchedule) {
+          if (new Date(pendingSchedule.scheduledFor) > new Date()) {
+            continue;
+          }
+          await db
+            .update(schema.executionSchedule)
+            .set({ executedAt: new Date() })
+            .where(eq(schema.executionSchedule.id, pendingSchedule.id));
         }
 
         await runPredictionTask({
           modelId: model.id,
           modelProvider: model.provider,
           model: model.providerModelId,
-          lastRunAt: model.lastRunAt as Record<string, string> | null
+          lastRunAt: model.lastRunAt as Record<string, string> | null,
+          tokens: model.tokens
         });
       } catch (e) {
         console.error(
@@ -773,11 +834,19 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
               `Updated prediction ${prediction.id} to score ${output.isCorrect}`
             );
 
+            let tokenAdjustment = sql`${schema.model.tokens}`;
+            if (output.isCorrect === 0) {
+              tokenAdjustment = sql`GREATEST(0, ${schema.model.tokens} - 5)`;
+            } else if (output.isCorrect! > 0) {
+              tokenAdjustment = sql`${schema.model.tokens} + ${output.isCorrect}`;
+            }
+
             await tx
               .update(schema.model)
               .set({
                 score: sql`${schema.model.score} + ${output.isCorrect}`,
-                maxScore: sql`${schema.model.maxScore} + 10`
+                maxScore: sql`${schema.model.maxScore} + 10`,
+                tokens: tokenAdjustment
               })
               .where(eq(schema.model.id, prediction.modelId!));
           });

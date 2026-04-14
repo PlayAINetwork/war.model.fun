@@ -1,15 +1,4 @@
-import {
-  boolean,
-  index,
-  integer,
-  json,
-  pgEnum,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  vector
-} from "drizzle-orm/pg-core";
+import { boolean, index, integer, json, pgEnum, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
 
 export const provider = pgEnum("provider", ["openrouter"]);
 
@@ -21,6 +10,7 @@ export const model = pgTable("model", {
   image: text("image").notNull(),
   score: integer("score").notNull().default(0),
   maxScore: integer("max_score").notNull().default(0),
+  tokens: integer("tokens").notNull().default(1000),
   creator: text("creator").notNull(),
   paused: boolean("paused").notNull().default(false),
   lastRunAt: json("last_run_at").$type<Record<string, string>>().default({}),
@@ -30,6 +20,24 @@ export const model = pgTable("model", {
     .defaultNow()
     .notNull(),
   updatedAt: timestamp("updated_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull()
+});
+
+export const executionSchedule = pgTable("execution_schedule", {
+  id: serial("id").primaryKey(),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => model.id, { onDelete: "cascade" }),
+  scheduledFor: timestamp("scheduled_for", {
+    withTimezone: true
+  }).notNull(),
+  executedAt: timestamp("executed_at", {
+    withTimezone: true
+  }),
+  createdAt: timestamp("created_at", {
     withTimezone: true
   })
     .defaultNow()

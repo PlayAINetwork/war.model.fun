@@ -44,6 +44,25 @@ app.get(
 );
 
 app.get(
+  "/execution-reasoning",
+  zValidator(
+    "query",
+    paginationSchema.extend({ id: z.coerce.number().optional() })
+  ),
+  async (c) => {
+    const { page, limit, id } = c.req.valid("query");
+    return c.json(
+      await PredictionService.getModelHistory({
+        modelId: id,
+        page,
+        limit,
+        onlyExecutionReasoning: true
+      })
+    );
+  }
+);
+
+app.get(
   "/",
   zValidator(
     "query",

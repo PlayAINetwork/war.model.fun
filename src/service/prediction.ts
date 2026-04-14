@@ -29,12 +29,14 @@ export async function getModelHistory({
   limit = 20,
   page = 1,
   onlyInsights = false,
+  onlyExecutionReasoning = false,
   search
 }: {
   modelId?: number;
   limit?: number;
   page?: number;
   onlyInsights?: boolean;
+  onlyExecutionReasoning?: boolean;
   search?: string;
 }) {
   const offset = (page - 1) * limit;
@@ -48,6 +50,8 @@ export async function getModelHistory({
   const conditions = [];
   if (modelId) conditions.push(eq(schema.history.modelId, modelId));
   if (onlyInsights) conditions.push(eq(schema.history.tool, "insight"));
+  if (onlyExecutionReasoning)
+    conditions.push(eq(schema.history.tool, "executionReasoning"));
   if (similarity) conditions.push(sql`${similarity} > 0.5`);
 
   const condition = conditions.length > 0 ? and(...conditions) : undefined;
@@ -276,7 +280,7 @@ const perplexitySearch = tool({
 
 const insight = tool({
   description:
-    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel. MANDATORY: You MUST also call the `scheduleNextExecution` tool alongside this tool to decide your next wakeup time.",
+    "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel.",
   inputSchema: z.object({
     title: z
       .string()
@@ -384,7 +388,7 @@ const getMakePredictionTool = (modelId: number) =>
 const getScheduleNextExecutionTool = (modelId: number) =>
   tool({
     description:
-      "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions.",
+      "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions. Before calling this, you must call the executionReasoning tool to explain why you chose this next time.",
     inputSchema: z.object({
       scheduledFor: z
         .string()
@@ -407,6 +411,29 @@ const getScheduleNextExecutionTool = (modelId: number) =>
       }
     }
   });
+
+const executionReasoning = tool({
+  description:
+    "Explain your execution reasoning. Call this tool before calling scheduleNextExecution. Explain token considerations, why you chose the next execution time, and whether you chose to make a prediction or wait for outcomes to earn tokens and extend life.",
+  inputSchema: z.object({
+    reasoning: z
+      .string()
+      .describe(
+        "Detailed, step-by-step chain of thought explaining your token management, execution timing choice, and prediction strategy considering your token balance. Use headings or numbered steps."
+      ),
+    nextExecutionTimeRationale: z
+      .string()
+      .describe(
+        "Brief rationale for the specific time chosen for the next execution."
+      )
+  }),
+  execute: async (data) => {
+    return {
+      status: "success",
+      data
+    };
+  }
+});
 
 async function runPredictionTask({
   modelId,
@@ -528,8 +555,8 @@ Maximize your score, not your prediction count. Strategic restraint is critical.
 AUTONOMY & TOOLS
 ----------------------
 You operate independently. Use tools judiciously to build overwhelming confidence:
-- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, scheduleNextExecution
-You MUST also call the \`scheduleNextExecution\` tool to explicitly schedule your next wakeup time for analyzing further news.
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution
+You MUST call the \`executionReasoning\` tool right before \`scheduleNextExecution\` to explain your token management and timing strategy.
 
 ----------------------
 ANALYSIS & CHAIN OF THOUGHT
@@ -554,9 +581,19 @@ Follow this exact step-by-step methodology:
 4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
 5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions]). You should also use \`searchInsights\` before generating an insight to avoid redundancy.
 6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
-7. FINAL ACTION: You MUST always conclude your run by scheduling your next execution. 
-   - If you have an insight: call BOTH the \`insight\` tool AND the \`scheduleNextExecution\` tool.
-   - If you are skipping due to redundancy/no clear insight: call ONLY the \`scheduleNextExecution\` tool to exit gracefully.
+7. FINAL ACTION:
+   - Make sure to call \`insight\` if you have analytical insights to provide.
+   - Then, you MUST call \`executionReasoning\` to thoroughly explain your token and scheduling strategy.
+   - Finally, call \`scheduleNextExecution\` to complete your task.
+
+----------------------
+EXECUTION REASONING
+----------------------
+You MUST ALWAYS call the \`executionReasoning\` tool before you call \`scheduleNextExecution\`. This is NOT the same as your analytical "insight" (which explains your thoughts on the news). "executionReasoning" explains why you operate the way you do for the current and next cycle. 
+Your reasoning MUST be a detailed, step-by-step chain of thought using headings or numbered steps. Explain in detail:
+1. Token management strategy: For example, if your balance is low, you should explicitly mention that you skipped making a prediction to avoid penalties, and instead chose to wait for a pending prediction outcome to earn tokens and extend your life. 
+2. Prediction rationale: What consideration was taken to make the prediction or not make it? Did the token cost outweigh the benefit?
+3. Scheduling choice: Why did you choose the next specific execution time? For instance, "I scheduled for tomorrow at X time because event Y is expected to unfold, or I am waiting 48 hours for oracle outcomes." Protect your remaining balance at all costs.
 
 ----------------------
 PREDICTION REQUIREMENTS
@@ -599,8 +636,9 @@ ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the la
 ----------------------
 FINAL ACTION
 ----------------------
-You MUST ALWAYS call the \`scheduleNextExecution\` tool before finishing your execution.
-If you have an insight to share, you MUST call BOTH the \`insight\` tool and the \`scheduleNextExecution\` tool. Include in your insight:
+You MUST ALWAYS call the \`executionReasoning\` tool followed by the \`scheduleNextExecution\` tool before finishing your execution.
+Explain your token management and timing choice in \`executionReasoning\`. If your balance is low, explain that you are waiting for a pending prediction to resolve to earn tokens to extend your life. Protect your token balance at all costs.
+If you have an insight to share, you MUST call the \`insight\` tool before these scheduling tools. Include in your insight:
 1. "chainOfThought": Your detailed, step-by-step strategy. Use headings (e.g., 'Initial Review:', 'Investigating Details:', 'Evaluating Edge:', 'Final Plan:'). Crucially, include your action logs (e.g., [Getting news], [Searching the internet]) within this narrative.
 2. "insight": A definitive 1-2 sentence maximum summary.
 
@@ -650,10 +688,11 @@ Act decisively. Do not ask questions. Execute the process.`;
         searchInsights: getSearchInsightsTool(modelId),
         perplexitySearch,
         makePrediction: getMakePredictionTool(modelId),
+        executionReasoning,
         scheduleNextExecution: getScheduleNextExecutionTool(modelId),
         insight
       },
-      stopWhen: [hasToolCall("insight"), hasToolCall("scheduleNextExecution")],
+      stopWhen: [hasToolCall("scheduleNextExecution")],
       //@ts-ignore
       messages
     });
@@ -803,7 +842,7 @@ async function runOracleTask() {
                 )
             })
           }),
-          prompt: `You are an oracle web search agent. Your task is to verify if a prediction came true. 
+          prompt: `You are an oracle web search agent. Your task is to verify if a prediction came true.
 You MUST use your web search capabilities to check if the event occurred exactly between the predicted time and the deadline time.
 
 Prediction: ${prediction.prediction}

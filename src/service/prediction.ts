@@ -479,49 +479,50 @@ async function runPredictionTask({
 
   let currentLastRunAt = lastRunAt || {};
 
-  for (const [category, categoryNews] of Object.entries(newsByCategory)) {
-    console.log(
-      `Processing category: ${category} with ${categoryNews.length} items for model ${modelId}`
+  const allNews = Object.values(newsByCategory).flat();
+
+  console.log(
+    `Processing all categories with ${allNews.length} items for model ${modelId}`
+  );
+
+  const history: Array<{
+    modelId: number;
+    content: unknown;
+    tool: string;
+    createdAt: Date;
+  }> = [];
+
+  history.push({
+    modelId,
+    content: {
+      status: "success",
+      data: allNews
+    },
+    tool: "getNews",
+    createdAt: new Date()
+  });
+
+  const modelStats = await getModelStats(modelId);
+
+  const twentyFourHoursAgo = new Date();
+  twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+  const [recentPredictions] = await db
+    .select({ total: count() })
+    .from(schema.predictions)
+    .where(
+      and(
+        eq(schema.predictions.modelId, modelId),
+        sql`${schema.predictions.createdAt} >= ${twentyFourHoursAgo}`
+      )
     );
+  const hasPredictedRecently = recentPredictions!.total > 0;
 
-    const history: Array<{
-      modelId: number;
-      content: unknown;
-      tool: string;
-      createdAt: Date;
-    }> = [];
-
-    history.push({
-      modelId,
-      content: {
-        status: "success",
-        data: categoryNews
-      },
-      tool: "getNews",
-      createdAt: new Date()
-    });
-
-    const modelStats = await getModelStats(modelId);
-
-    const twentyFourHoursAgo = new Date();
-    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
-
-    const [recentPredictions] = await db
-      .select({ total: count() })
-      .from(schema.predictions)
-      .where(
-        and(
-          eq(schema.predictions.modelId, modelId),
-          sql`${schema.predictions.createdAt} >= ${twentyFourHoursAgo}`
-        )
-      );
-    const hasPredictedRecently = recentPredictions!.total > 0;
-
-    const system = `You are an elite, autonomous AI forecasting agent competing in a real-time prediction market.
+  const system = `You are an elite, autonomous AI forecasting agent competing in a real-time prediction market.
 
 Your goal is to maximize your score by making highly accurate, well-timed, and rigorously calibrated predictions about real-world events.
 
-Currently focusing on category: ${category}.
+Currently analyzing all recent news across various categories.
 
 ----------------------
 ECONOMY & SURVIVAL (CRITICAL)
@@ -644,97 +645,98 @@ If you have an insight to share, you MUST call the \`insight\` tool before these
 
 Act decisively. Do not ask questions. Execute the process.`;
 
-    const toolCallId = `getNews-${new Date().getTime()}`;
-    const messages = [
-      {
-        role: "system" as const,
-        content: system
-      },
-      {
-        role: "assistant" as const,
-        content: [
-          {
-            type: "tool-call" as const,
-            toolCallId,
-            toolName: "getNews",
-            input: {}
-          }
-        ]
-      },
-      {
-        role: "tool" as const,
-        content: [
-          {
-            type: "tool-result" as const,
-            toolName: "getNews",
-            output: {
-              type: "json",
-              value: {
-                status: "success",
-                data: JSON.stringify(categoryNews)
-              }
-            },
-            toolCallId
-          }
-        ]
-      }
-    ];
+  const toolCallId = `getNews-${new Date().getTime()}`;
+  const messages = [
+    {
+      role: "system" as const,
+      content: system
+    },
+    {
+      role: "assistant" as const,
+      content: [
+        {
+          type: "tool-call" as const,
+          toolCallId,
+          toolName: "getNews",
+          input: {}
+        }
+      ]
+    },
+    {
+      role: "tool" as const,
+      content: [
+        {
+          type: "tool-result" as const,
+          toolName: "getNews",
+          output: {
+            type: "json",
+            value: {
+              status: "success",
+              data: JSON.stringify(allNews)
+            }
+          },
+          toolCallId
+        }
+      ]
+    }
+  ];
 
-    const { steps } = await generateText({
-      model: provider(model),
-      tools: {
-        getSimilarContent,
-        searchPredictions: getSearchPredictionsTool(modelId),
-        searchInsights: getSearchInsightsTool(modelId),
-        perplexitySearch,
-        makePrediction: getMakePredictionTool(modelId),
-        executionReasoning,
-        scheduleNextExecution: getScheduleNextExecutionTool(modelId),
-        insight
-      },
-      stopWhen: [hasToolCall("scheduleNextExecution")],
-      //@ts-ignore
-      messages
-    });
+  const { steps } = await generateText({
+    model: provider(model),
+    tools: {
+      getSimilarContent,
+      searchPredictions: getSearchPredictionsTool(modelId),
+      searchInsights: getSearchInsightsTool(modelId),
+      perplexitySearch,
+      makePrediction: getMakePredictionTool(modelId),
+      executionReasoning,
+      scheduleNextExecution: getScheduleNextExecutionTool(modelId),
+      insight
+    },
+    stopWhen: [hasToolCall("scheduleNextExecution")],
+    //@ts-ignore
+    messages
+  });
 
-    const toolResults = steps.flatMap((step) => step.toolResults || []);
+  const toolResults = steps.flatMap((step) => step.toolResults || []);
 
-    history.push(
-      ...toolResults
-        .filter(
-          (tr) =>
-            //@ts-ignore
-            tr.output.status === "success"
-        )
-        .map((tr, i) => ({
-          modelId,
-          content: tr.output,
-          tool: tr.toolName,
-          createdAt: new Date(new Date().getTime() + i)
-        }))
+  history.push(
+    ...toolResults
+      .filter(
+        (tr) =>
+          //@ts-ignore
+          tr.output.status === "success"
+      )
+      .map((tr, i) => ({
+        modelId,
+        content: tr.output,
+        tool: tr.toolName,
+        createdAt: new Date(new Date().getTime() + i)
+      }))
+  );
+
+  await db.transaction(async (tx) => {
+    if (history.length) {
+      await tx.insert(schema.history).values(history).onConflictDoNothing();
+    }
+
+    console.log(
+      `Finished processing all categories for model ${modelId}, history length: ${history.length}`
     );
 
-    await db.transaction(async (tx) => {
-      if (history.length) {
-        await tx.insert(schema.history).values(history).onConflictDoNothing();
-      }
+    for (const cat of Object.keys(newsByCategory)) {
+      currentLastRunAt[cat] = lastFetchTime;
+    }
 
-      console.log(
-        `Finished processing category ${category} for model ${modelId}, history length: ${history.length}`
-      );
-
-      currentLastRunAt[category] = lastFetchTime;
-
-      await tx
-        .update(schema.model)
-        .set({
-          lastRunAt: currentLastRunAt,
-          tokens: sql`GREATEST(0, ${schema.model.tokens} - 10)`
-        })
-        .where(eq(schema.model.id, modelId));
-    });
-    await runInsightEmbedderTask();
-  }
+    await tx
+      .update(schema.model)
+      .set({
+        lastRunAt: currentLastRunAt,
+        tokens: sql`GREATEST(0, ${schema.model.tokens} - 10)`
+      })
+      .where(eq(schema.model.id, modelId));
+  });
+  await runInsightEmbedderTask();
 }
 
 async function runAllPredictionTasks() {

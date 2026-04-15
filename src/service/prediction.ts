@@ -169,7 +169,7 @@ export async function getModelStats(modelId: number) {
     verifiedMaxPossibleScore: modelStats.maxScore,
     correct: predictions!.correct || 0,
     pendingUnverifiedPredictions:
-      (predictions!.total as number) - modelStats.maxScore,
+      (predictions!.total as number) - modelStats.maxScore / 10,
     score: modelStats.score || 0,
     accuracy:
       modelStats.maxScore > 0

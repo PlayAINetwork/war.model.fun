@@ -1,56 +1,144 @@
 import { Hono } from "hono";
 import { html } from "hono/html";
 import { PredictionService } from "../service";
+import db, { schema } from "../drizzle";
+import { desc, inArray } from "drizzle-orm";
 
 const router = new Hono();
 
 router.get("/", async (c) => {
   const models = await PredictionService.getModels();
 
+  if (models.length === 0) {
+    return c.html(
+      html`<!DOCTYPE html>
+        <html lang="en">
+          <body>
+            <p>No models</p>
+          </body>
+        </html>`
+    );
+  }
+
+  const modelIds = models.map((m) => m.id);
+
+  const [allHistory, allPredictions] = await Promise.all([
+    db
+      .select({
+        id: schema.history.id,
+        modelId: schema.history.modelId,
+        content: schema.history.content,
+        tool: schema.history.tool,
+        createdAt: schema.history.createdAt
+      })
+      .from(schema.history)
+      .where(inArray(schema.history.modelId, modelIds))
+      .orderBy(desc(schema.history.createdAt))
+      .limit(1000),
+
+    db
+      .select({
+        id: schema.predictions.id,
+        modelId: schema.predictions.modelId,
+        prediction: schema.predictions.prediction,
+        reasoning: schema.predictions.reasoning,
+        happensBefore: schema.predictions.happensBefore,
+        confidence: schema.predictions.confidence,
+        isCorrect: schema.predictions.isCorrect,
+        sources: schema.predictions.sources,
+        outcomeSources: schema.predictions.outcomeSources,
+        outcomeReasoning: schema.predictions.outcomeReasoning,
+        createdAt: schema.predictions.createdAt
+      })
+      .from(schema.predictions)
+      .where(inArray(schema.predictions.modelId, modelIds))
+      .orderBy(desc(schema.predictions.createdAt))
+      .limit(200)
+  ]);
+
   // We can fetch data concurrently per model
   const modelData = await Promise.all(
     models.map(async (m) => {
       const stats = await PredictionService.getModelStats(m.id);
 
-      const { data: insights } = await PredictionService.getModelHistory({
-        modelId: m.id,
-        limit: 10,
-        onlyInsights: true
-      });
-
-      const { data: executionReasoning } =
-        await PredictionService.getModelHistory({
-          modelId: m.id,
-          limit: 10,
-          onlyExecutionReasoning: true
-        });
-
-      const { data: predictions } = await PredictionService.getModelPredictions(
-        {
-          modelId: m.id,
-          limit: 10
-        }
+      const insights = allHistory.filter(
+        (h) => h.modelId === m.id && h.tool === "insight"
       );
+      const executionReasoning = allHistory.filter(
+        (h) => h.modelId === m.id && h.tool === "executionReasoning"
+      );
+      const schedules = allHistory.filter(
+        (h) => h.modelId === m.id && h.tool === "scheduleNextExecution"
+      );
+      const predictions = allPredictions.filter((p) => p.modelId === m.id);
 
       const predictionsTyped = predictions.map((p) => ({
         ...p,
         isPrediction: true
       }));
+      const schedulesTyped = schedules.map((s) => ({
+        ...s,
+        isSchedule: true
+      }));
 
       const historyItems = [
         ...insights,
         ...executionReasoning,
+        ...schedulesTyped,
         ...predictionsTyped
       ].sort(
         (a, b) =>
           new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
       );
 
+      const cycles: any[][] = [];
+      let currentCycle: any[] = [];
+      for (const item of historyItems) {
+        if (currentCycle.length === 0) {
+          currentCycle.push(item);
+        } else {
+          const lastItem = currentCycle[currentCycle.length - 1];
+          if (
+            Math.abs(
+              new Date(lastItem.createdAt).getTime() -
+                new Date(item.createdAt).getTime()
+            ) < 120000
+          ) {
+            currentCycle.push(item);
+          } else {
+            cycles.push(currentCycle);
+            currentCycle = [item];
+          }
+        }
+      }
+      if (currentCycle.length > 0) {
+        cycles.push(currentCycle);
+      }
+
+      const groupedHistory = cycles.map((cycle) => {
+        return {
+          executionReasoning: cycle.find(
+            (i) =>
+              !("isPrediction" in i) &&
+              !("isSchedule" in i) &&
+              i.tool === "executionReasoning"
+          ),
+          insight: cycle.find(
+            (i) =>
+              !("isPrediction" in i) &&
+              !("isSchedule" in i) &&
+              i.tool === "insight"
+          ),
+          prediction: cycle.find((i) => "isPrediction" in i),
+          schedule: cycle.find((i) => "isSchedule" in i),
+          timestamp: cycle[0].createdAt
+        };
+      });
+
       return {
         model: m,
         stats,
-        historyItems,
-        predictions
+        groupedHistory
       };
     })
   );
@@ -155,82 +243,119 @@ router.get("/", async (c) => {
 
                     <div class="section">
                       <h3>[ HISTORY ]</h3>
-                      ${d.historyItems.length === 0 ? html`<p>No data</p>` : ""}
-                      ${d.historyItems.map((item, index) => {
-                        const isPrediction = "isPrediction" in item;
-                        if (isPrediction) {
-                          const p = item as any;
-                          return html`
-                            <div class="item">
-                              <div class="meta">
-                                ${new Date(p.createdAt).toLocaleString()} |
-                                [PREDICTION] | Confidence: ${p.confidence}%
-                              </div>
-                              <strong>${p.prediction}</strong>
-                              <p>Reasoning: ${p.reasoning}</p>
-                              ${p.isCorrect !== null
-                                ? html`<div>
-                                    Outcome:
-                                    ${p.isCorrect > 0 ? "Correct" : "Incorrect"}
-                                    (${p.outcomeReasoning})
-                                  </div>`
-                                : html`<div>Status: Pending verification</div>`}
-                            </div>
-                          `;
-                        }
+                      ${d.groupedHistory.length === 0
+                        ? html`<p>No data</p>`
+                        : ""}
+                      ${d.groupedHistory.map((group, index) => {
+                        const uid = `block_${d.model.id}_${index}`;
+                        const er = group.executionReasoning;
+                        const insight = group.insight;
+                        const pred = group.prediction;
+                        const sched = group.schedule;
 
-                        const content = item.content as any;
-                        const uid = `block_${d.model.id}_${item.id}_${index}`;
-
-                        if (item.tool === "insight") {
-                          return html`
-                            <div class="item">
-                              <div class="meta">
-                                ${new Date(item.createdAt).toLocaleString()} |
-                                [INSIGHT]
-                              </div>
-                              <strong
-                                >${content?.data?.title || "Insight"}</strong
-                              >
-                              <p>${content?.data?.insight}</p>
-                              ${content?.data?.chainOfThought
-                                ? html`
+                        return html`
+                          <div>
+                            ${er
+                              ? html`
+                                  <div class="item">
+                                    <div class="meta">
+                                      ${new Date(er.createdAt).toLocaleString()}
+                                    </div>
+                                    <strong>[EXECUTION REASONING]</strong><br />
                                     <button
                                       class="toggle-btn"
-                                      onclick="document.getElementById('cot_${uid}').style.display = document.getElementById('cot_${uid}').style.display === 'none' ? 'block' : 'none'"
+                                      onclick="document.getElementById('er_${uid}').style.display = document.getElementById('er_${uid}').style.display === 'none' ? 'block' : 'none'"
                                     >
-                                      Toggle Chain of Thought
+                                      Toggle Execution Reasoning
                                     </button>
-                                    <pre id="cot_${uid}" style="display: none;">
-${content.data.chainOfThought}</pre
+                                    <div id="er_${uid}" style="display: none;">
+                                      <pre>${er.content?.data?.reasoning}</pre>
+                                    </div>
+                                    ${sched
+                                      ? html`
+                                          <div
+                                            class="meta"
+                                            style="margin-top: 10px;"
+                                          >
+                                            <strong>[NEXT SCHEDULE]</strong
+                                            ><br />
+                                            Next execution schedule:
+                                            ${new Date(
+                                              sched.content?.data?.scheduledFor
+                                            ).toLocaleString()}
+                                          </div>
+                                        `
+                                      : html`
+                                          <div
+                                            class="meta"
+                                            style="margin-top: 10px;"
+                                          >
+                                            <strong>[NEXT SCHEDULE]</strong
+                                            ><br />
+                                            Next execution rationale:
+                                            ${er.content?.data
+                                              ?.nextExecutionTimeRationale}
+                                          </div>
+                                        `}
+                                  </div>
+                                `
+                              : ""}
+                            ${insight
+                              ? html`
+                                  <div class="item">
+                                    <strong>[INSIGHT]</strong><br />
+                                    <strong
+                                      >${insight.content?.data?.title ||
+                                      "Insight"}</strong
                                     >
-                                  `
-                                : ""}
-                            </div>
-                          `;
-                        } else {
-                          return html`
-                            <div class="item">
-                              <div class="meta">
-                                ${new Date(item.createdAt).toLocaleString()} |
-                                [EXECUTION REASONING]
-                              </div>
-                              <button
-                                class="toggle-btn"
-                                onclick="document.getElementById('er_${uid}').style.display = document.getElementById('er_${uid}').style.display === 'none' ? 'block' : 'none'"
-                              >
-                                Toggle Execution Reasoning
-                              </button>
-                              <div id="er_${uid}" style="display: none;">
-                                <pre>${content?.data?.reasoning}</pre>
-                                <div class="meta">
-                                  Next execution locale:
-                                  ${content?.data?.scheduledFor}
-                                </div>
-                              </div>
-                            </div>
-                          `;
-                        }
+                                    <p>${insight.content?.data?.insight}</p>
+                                    ${insight.content?.data?.chainOfThought
+                                      ? html`
+                                          <button
+                                            class="toggle-btn"
+                                            onclick="document.getElementById('cot_${uid}').style.display = document.getElementById('cot_${uid}').style.display === 'none' ? 'block' : 'none'"
+                                          >
+                                            Toggle Chain of Thought
+                                          </button>
+                                          <pre
+                                            id="cot_${uid}"
+                                            style="display: none;"
+                                          >
+${insight.content.data.chainOfThought}</pre
+                                          >
+                                        `
+                                      : ""}
+                                  </div>
+                                `
+                              : ""}
+                            ${pred
+                              ? html`
+                                  <div class="item">
+                                    <strong>[PREDICTION]</strong><br />
+                                    <div class="meta">
+                                      Confidence: ${pred.confidence}%
+                                    </div>
+                                    <strong>${pred.prediction}</strong>
+                                    <p>Reasoning: ${pred.reasoning}</p>
+                                    ${pred.isCorrect !== null
+                                      ? html`<div>
+                                          Outcome:
+                                          ${pred.isCorrect > 0
+                                            ? "Correct"
+                                            : "Incorrect"}
+                                          (${pred.outcomeReasoning})
+                                        </div>`
+                                      : html`<div>
+                                          Status: Pending verification
+                                        </div>`}
+                                  </div>
+                                `
+                              : ""}
+                            <hr
+                              style="border: 0; border-top: 1px dashed #0f0; margin: 20px 0;"
+                            />
+                          </div>
+                        `;
                       })}
                     </div>
                   </div>

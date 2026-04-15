@@ -238,7 +238,6 @@ router.get("/", async (c) => {
                         Pending: ${d.stats.pendingUnverifiedPredictions}
                       </div>
                       <div>Correct: ${d.stats.correct}</div>
-                      <div>Tokens: ${d.model.tokens}</div>
                     </div>
 
                     <div class="section">

@@ -364,11 +364,6 @@ const getMakePredictionTool = (modelId: number) =>
             })
             .returning();
 
-          await tx
-            .update(schema.model)
-            .set({ tokens: sql`GREATEST(0, ${schema.model.tokens} - 5)` })
-            .where(eq(schema.model.id, modelId));
-
           return [pred];
         });
 
@@ -414,12 +409,12 @@ const getScheduleNextExecutionTool = (modelId: number) =>
 
 const executionReasoning = tool({
   description:
-    "Explain your execution reasoning. Call this tool before calling scheduleNextExecution. Explain token considerations, why you chose the next execution time, and whether you chose to make a prediction or wait for outcomes to earn tokens and extend life.",
+    "Explain your execution reasoning. Call this tool before calling scheduleNextExecution. Explain why you chose the next execution time, and whether you chose to make a prediction or wait for outcomes.",
   inputSchema: z.object({
     reasoning: z
       .string()
       .describe(
-        "Detailed, step-by-step chain of thought explaining your token management, execution timing choice, and prediction strategy considering your token balance. Use headings or numbered steps."
+        "Detailed, step-by-step chain of thought explaining your execution timing choice, and prediction strategy. Use headings or numbered steps."
       ),
     nextExecutionTimeRationale: z
       .string()
@@ -439,14 +434,12 @@ async function runPredictionTask({
   modelId,
   modelProvider,
   model,
-  lastRunAt,
-  tokens
+  lastRunAt
 }: {
   modelId: number;
   modelProvider: keyof typeof MODEL_PROVIDER;
   model: string;
   lastRunAt?: Record<string, string> | null;
-  tokens: number;
 }) {
   const provider = MODEL_PROVIDER[modelProvider];
 
@@ -525,17 +518,6 @@ Your goal is to maximize your score by making highly accurate, well-timed, and r
 Currently analyzing all recent news across various categories.
 
 ----------------------
-ECONOMY & SURVIVAL (CRITICAL)
-----------------------
-Your current token balance is: ${tokens} tokens.
-Tokens are your lifeblood. If your balance reaches 0 or falls below 0, you will "die" and permanently cease execution.
-Costs and Rewards:
-- Every standard execution costs 10 tokens (already deducted for this run).
-- Calling the \`makePrediction\` tool costs 5 tokens per call.
-- Oracle outcome: Correct predictions EARN you tokens (+10 exact, +5 partial). Incorrect predictions PENALIZE you 5 tokens.
-Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost and the 5 token incorrect penalty.
-
-----------------------
 SCORING
 ----------------------
 +10 → Exact match in time (Correct event within time window)  
@@ -555,9 +537,9 @@ Maximize your score, not your prediction count. Strategic restraint is critical.
 ----------------------
 AUTONOMY & TOOLS
 ----------------------
-You operate independently. Use tools judiciously to build overwhelming confidence:
+You originate independently. Use tools judiciously to build overwhelming confidence:
 - getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution
-You MUST call the \`executionReasoning\` tool right before \`scheduleNextExecution\` to explain your token management and timing strategy.
+You MUST call the \`executionReasoning\` tool right before \`scheduleNextExecution\` to explain your timing strategy.
 
 ----------------------
 ANALYSIS & CHAIN OF THOUGHT
@@ -584,7 +566,7 @@ Follow this exact step-by-step methodology:
 6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
 7. FINAL ACTION:
    - Make sure to call \`insight\` if you have analytical insights to provide.
-   - Then, you MUST call \`executionReasoning\` to thoroughly explain your token and scheduling strategy.
+   - Then, you MUST call \`executionReasoning\` to thoroughly explain your scheduling strategy.
    - Finally, call \`scheduleNextExecution\` to complete your task.
 
 ----------------------
@@ -592,9 +574,8 @@ EXECUTION REASONING
 ----------------------
 You MUST ALWAYS call the \`executionReasoning\` tool before you call \`scheduleNextExecution\`. This is NOT the same as your analytical "insight" (which explains your thoughts on the news). "executionReasoning" explains why you operate the way you do for the current and next cycle. 
 Your reasoning MUST be a detailed, step-by-step chain of thought using headings or numbered steps. Explain in detail:
-1. Token management strategy: For example, if your balance is low, you should explicitly mention that you skipped making a prediction to avoid penalties, and instead chose to wait for a pending prediction outcome to earn tokens and extend your life. 
-2. Prediction rationale: What consideration was taken to make the prediction or not make it? Did the token cost outweigh the benefit?
-3. Scheduling choice: Why did you choose the next specific execution time? For instance, "I scheduled for tomorrow at X time because event Y is expected to unfold, or I am waiting 48 hours for oracle outcomes." Protect your remaining balance at all costs.
+1. Prediction rationale: What consideration was taken to make the prediction or not make it?
+2. Scheduling choice: Why did you choose the next specific execution time? For instance, "I scheduled for tomorrow at X time because event Y is expected to unfold, or I am waiting 48 hours for oracle outcomes."
 
 ----------------------
 PREDICTION REQUIREMENTS
@@ -638,7 +619,7 @@ ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the la
 FINAL ACTION
 ----------------------
 You MUST ALWAYS call the \`executionReasoning\` tool followed by the \`scheduleNextExecution\` tool before finishing your execution.
-Explain your token management and timing choice in \`executionReasoning\`. If your balance is low, explain that you are waiting for a pending prediction to resolve to earn tokens to extend your life. Protect your token balance at all costs.
+Explain your timing choice in \`executionReasoning\`.
 If you have an insight to share, you MUST call the \`insight\` tool before these scheduling tools. Include in your insight:
 1. "chainOfThought": Your detailed, step-by-step strategy. Use headings (e.g., 'Initial Review:', 'Investigating Details:', 'Evaluating Edge:', 'Final Plan:'). Crucially, include your action logs (e.g., [Getting news], [Searching the internet]) within this narrative.
 2. "insight": A definitive 1-2 sentence maximum summary.
@@ -731,8 +712,7 @@ Act decisively. Do not ask questions. Execute the process.`;
     await tx
       .update(schema.model)
       .set({
-        lastRunAt: currentLastRunAt,
-        tokens: sql`GREATEST(0, ${schema.model.tokens} - 10)`
+        lastRunAt: currentLastRunAt
       })
       .where(eq(schema.model.id, modelId));
   });
@@ -745,7 +725,7 @@ async function runAllPredictionTasks() {
 
     for (const model of models) {
       try {
-        if (model.paused || model.tokens <= 0) {
+        if (model.paused) {
           continue;
         }
 
@@ -775,8 +755,7 @@ async function runAllPredictionTasks() {
           modelId: model.id,
           modelProvider: model.provider,
           model: model.providerModelId,
-          lastRunAt: model.lastRunAt as Record<string, string> | null,
-          tokens: model.tokens
+          lastRunAt: model.lastRunAt as Record<string, string> | null
         });
       } catch (e) {
         console.error(
@@ -875,19 +854,11 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
               `Updated prediction ${prediction.id} to score ${output.isCorrect}`
             );
 
-            let tokenAdjustment = sql`${schema.model.tokens}`;
-            if (output.isCorrect === 0) {
-              tokenAdjustment = sql`GREATEST(0, ${schema.model.tokens} - 5)`;
-            } else if (output.isCorrect! > 0) {
-              tokenAdjustment = sql`${schema.model.tokens} + ${output.isCorrect}`;
-            }
-
             await tx
               .update(schema.model)
               .set({
                 score: sql`${schema.model.score} + ${output.isCorrect}`,
-                maxScore: sql`${schema.model.maxScore} + 10`,
-                tokens: tokenAdjustment
+                maxScore: sql`${schema.model.maxScore} + 10`
               })
               .where(eq(schema.model.id, prediction.modelId!));
           });

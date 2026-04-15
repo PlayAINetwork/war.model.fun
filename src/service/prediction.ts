@@ -563,7 +563,7 @@ Follow this exact step-by-step methodology:
 3. CONTEXTUALIZE: Use \`getSimilarContent\` to find related historical data and establish baselines. (Log as: [Finding similar historical context])
 4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
 5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions]). You should also use \`searchInsights\` before generating an insight to avoid redundancy.
-6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score.
+6. RECORD PREDICTIONS: If novel, logically sound, and highly probable, use \`makePrediction\`. Provide airtight reasoning and a realistic confidence score. If no strong prediction exists immediately, skip this step and just store your findings using the \`insight\` tool.
 7. FINAL ACTION:
    - Make sure to call \`insight\` if you have analytical insights to provide.
    - Then, you MUST call \`executionReasoning\` to thoroughly explain your scheduling strategy.
@@ -613,7 +613,7 @@ ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the la
 - MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight and just use \`scheduleNextExecution\`.
 - OBJECTIVE & MEASURABLE: Bad: "The market will crash." Good: "The S&P 500 will close down at least 3% in a single day before Friday."
 - NO OBVIOUS PREDICTIONS: Do not predict routine, scheduled, or virtually guaranteed events. 
-- INSUFFICIENT DATA: If uncertain, DO NOT force a prediction. Abstain and wait.
+- INSUFFICIENT DATA / WAITING: You do not necessarily have to make a prediction if you lack confidence or if no clear prediction exists immediately. You can simply store your analysis using the \`insight\` tool and wait to make a prediction on a future execution if you become confident. DO NOT force a prediction. Abstain and wait.
 
 ----------------------
 FINAL ACTION

@@ -278,6 +278,132 @@ const perplexitySearch = tool({
   }
 });
 
+const getFlightDelays = tool({
+  description:
+    "Gets real-time flight delays data to monitor global travel disruptions.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const res = await fetch(
+        "https://api.worldmonitor.app/api/bootstrap?tier=fast",
+        {
+          headers: { origin: "https://www.worldmonitor.app" }
+        }
+      );
+      const data = (await res.json()) as any;
+      return {
+        status: "success",
+        data: data.data.flightDelays
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while fetching flight delays: ${e}`
+      };
+    }
+  }
+});
+
+const getCryptoQuotes = tool({
+  description: "Gets real-time crypto quotes and market data.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const res = await fetch(
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
+        {
+          headers: { origin: "https://www.worldmonitor.app" }
+        }
+      );
+      const data = (await res.json()) as any;
+      return {
+        status: "success",
+        data: data.data.cryptoQuotes
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while fetching crypto quotes: ${e}`
+      };
+    }
+  }
+});
+
+const getMarketImplications = tool({
+  description: "Gets current market implications and economic outlook data.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const res = await fetch(
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
+        {
+          headers: { origin: "https://www.worldmonitor.app" }
+        }
+      );
+      const data = (await res.json()) as any;
+      return {
+        status: "success",
+        data: data.data.marketImplications
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while fetching market implications: ${e}`
+      };
+    }
+  }
+});
+
+const getHyperliquidFlow = tool({
+  description: "Gets hyperliquid flow data to monitor deep market liquidity.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const res = await fetch(
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
+        {
+          headers: { origin: "https://www.worldmonitor.app" }
+        }
+      );
+      const data = (await res.json()) as any;
+      return {
+        status: "success",
+        data: data.data.hyperliquidFlow
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while fetching hyperliquid flow: ${e}`
+      };
+    }
+  }
+});
+
+const getFuelPrices = tool({
+  description: "Gets current global fuel prices.",
+  inputSchema: z.object({}),
+  execute: async () => {
+    try {
+      const res = await fetch(
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
+        {
+          headers: { origin: "https://www.worldmonitor.app" }
+        }
+      );
+      const data = (await res.json()) as any;
+      return {
+        status: "success",
+        data: data.data.fuelPrices
+      };
+    } catch (e) {
+      return {
+        status: "error",
+        message: `An error occurred while fetching fuel prices: ${e}`
+      };
+    }
+  }
+});
+
 const insight = tool({
   description:
     "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel.",
@@ -538,7 +664,7 @@ Maximize your score, not your prediction count. Strategic restraint is critical.
 AUTONOMY & TOOLS
 ----------------------
 You originate independently. Use tools judiciously to build overwhelming confidence:
-- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution, getFlightDelays, getCryptoQuotes, getMarketImplications, getHyperliquidFlow, getFuelPrices
 You MUST call the \`executionReasoning\` tool right before \`scheduleNextExecution\` to explain your timing strategy.
 
 ----------------------
@@ -559,7 +685,7 @@ PROCESS & STEPS
 ----------------------
 Follow this exact step-by-step methodology:
 1. GATHER CURRENT DATA: Use \`getNews\` to fetch the latest updates. (Log as: [Getting news])
-2. EXAMINE & EXPAND: Analyze the summaries provided in the news. If crucial details, context, or public reactions are missing, use \`perplexitySearch\` to investigate. (Log as: [Searching the internet])
+2. EXAMINE & EXPAND: Analyze the summaries provided in the news. If crucial details, context, or public reactions are missing, use \`perplexitySearch\` to investigate. (Log as: [Searching the internet]). Use \`getFlightDelays\`, \`getCryptoQuotes\`, \`getMarketImplications\`, \`getHyperliquidFlow\`, \`getFuelPrices\` to gather real-time market and travel data. (Log as: [Gathering real-time data]).
 3. CONTEXTUALIZE: Use \`getSimilarContent\` to find related historical data and establish baselines. (Log as: [Finding similar historical context])
 4. SYNTHESIZE & HYPOTHESIZE: Combine current news, additional context, and history. Map out logical outcomes, ripple effects, and high-probability future events.
 5. VALIDATE PREDICTIONS: Before recording ANY prediction, you MUST use \`searchPredictions\` to check for redundancy. If a similar active prediction exists, discard yours. (Log as: [Checking existing predictions]). You should also use \`searchInsights\` before generating an insight to avoid redundancy.
@@ -669,6 +795,11 @@ Act decisively. Do not ask questions. Execute the process.`;
       searchPredictions: getSearchPredictionsTool(modelId),
       searchInsights: getSearchInsightsTool(modelId),
       perplexitySearch,
+      getFlightDelays,
+      getCryptoQuotes,
+      getMarketImplications,
+      getHyperliquidFlow,
+      getFuelPrices,
       makePrediction: getMakePredictionTool(modelId),
       executionReasoning,
       scheduleNextExecution: getScheduleNextExecutionTool(modelId),

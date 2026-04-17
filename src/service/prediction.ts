@@ -615,7 +615,7 @@ async function runPredictionTask({
 
   const allNews = (
     await getNews({
-      limit: 100,
+      limit: 300,
       after: lastRunAt
         ? new Date(
             Math.max(

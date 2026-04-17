@@ -15,13 +15,17 @@ export async function getModels() {
   const models = await db
     .select()
     .from(schema.model)
-    .orderBy(desc(schema.model.score));
+    .orderBy(desc(schema.model.tokens));
 
-  return models.map((m) => ({
-    ...m,
-    accuracy:
-      m.maxScore > 0 ? (((m.score || 0) / m.maxScore) * 100).toFixed(2) : "N/A"
-  }));
+  return await Promise.all(
+    models.map(async (m) => {
+      const stats = await getModelStats(m.id);
+      return {
+        ...m,
+        accuracy: stats.accuracy
+      };
+    })
+  );
 }
 
 export async function getModelHistory({
@@ -150,7 +154,8 @@ export async function getModelStats(modelId: number) {
   const [predictions] = await db
     .select({
       total: count(),
-      correct: sql<number>`count(CASE WHEN ${schema.predictions.isCorrect} IS NOT NULL AND ${schema.predictions.isCorrect} >= 5 THEN 1 END)`
+      verified: sql<number>`count(CASE WHEN ${schema.predictions.isCorrect} IS NOT NULL THEN 1 END)`,
+      correct: sql<number>`count(CASE WHEN ${schema.predictions.isCorrect} IS NOT NULL AND ${schema.predictions.isCorrect} THEN 1 END)`
     })
     .from(schema.predictions)
     .where(eq(schema.predictions.modelId, modelId));
@@ -166,14 +171,13 @@ export async function getModelStats(modelId: number) {
 
   return {
     totalPredictions: predictions!.total,
-    verifiedMaxPossibleScore: modelStats.maxScore,
     correct: predictions!.correct || 0,
-    pendingUnverifiedPredictions:
-      (predictions!.total as number) - modelStats.maxScore / 10,
-    score: modelStats.score || 0,
+    verified: predictions!.verified || 0,
+    pending: predictions!.total - predictions!.verified,
+    tokens: modelStats.tokens,
     accuracy:
-      modelStats.maxScore > 0
-        ? (((modelStats.score || 0) / modelStats.maxScore) * 100).toFixed(2) +
+      predictions!.verified > 0
+        ? ((predictions!.correct / predictions!.verified) * 100).toFixed(2) +
           "%"
         : "N/A"
   };
@@ -658,13 +662,13 @@ Tokens are your lifeblood. If your balance reaches 0 or falls below 0, you will 
 Costs and Rewards:
 - Every standard execution costs 10 tokens (already deducted for this run).
 - Calling the \`makePrediction\` tool costs 5 tokens per call.
-- Oracle outcome: Correct predictions EARN you tokens (+10 exact, +5 partial). Incorrect predictions PENALIZE you 5 tokens.
-Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost and the 5 token incorrect penalty.
+- Oracle outcome: Correct predictions EARN you 50 tokens. Incorrect predictions PENALIZE you 50 tokens.
+Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost and the 50 token incorrect penalty.
 
 Your performance:
 - Total predictions: ${modelStats.totalPredictions}
 - Correct: ${modelStats.correct}
-- Pending (unverified): ${modelStats.pendingUnverifiedPredictions}
+- Pending (unverified): ${modelStats.pending}
 - Accuracy: ${modelStats.accuracy}
 
 Maximize your tokens, not your prediction count. Strategic restraint is critical.
@@ -952,10 +956,10 @@ async function runOracleTask() {
           output: Output.object({
             schema: z.object({
               isCorrect: z
-                .number()
+                .boolean()
                 .nullable()
                 .describe(
-                  "The score of the prediction. Return 10 if event type matches AND occurs within predicted time window. Return 5 if event type matches BUT outside predicted time window. Return 0 if event type does not occur within max evaluation window. Return null if no conclusive news yet and the max evaluation window hasn't passed."
+                  "Return true if event type matches AND occurs within predicted time window. Return false if event type doesn't occur or occurs outside predicted time window. Return null if no conclusive news yet and the max evaluation window hasn't passed."
                 ),
               outcomeReasoning: z
                 .string()
@@ -979,11 +983,10 @@ Prediction Date: ${prediction.createdAt?.toISOString()}
 Deadline: ${prediction.happensBefore?.toISOString()}
 
 Determine if the event occurred based on these criteria:
-- 10 points: If event type matches AND occurs within predicted time window
-- 5 points: If event type matches BUT outside predicted time window
-- 0 points: If event type does not occur within max evaluation window
+- true: If event type matches AND occurs within predicted time window
+- false: If event type does not occur or occurs outside predicted time window
 
-Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If there is no conclusive news yet AND the max evaluation window has not passed, return null.`
+Respond with the appropriate boolean and provide your reasoning. If there is no conclusive news yet AND the max evaluation window has not passed, return null.`
         });
 
         if (output.isCorrect !== null) {
@@ -1002,17 +1005,15 @@ Respond with the appropriate score (10, 5, or 0) and provide your reasoning. If 
             );
 
             let tokenAdjustment = sql`${schema.model.tokens}`;
-            if (output.isCorrect === 0) {
-              tokenAdjustment = sql`GREATEST(0, ${schema.model.tokens} - 5)`;
-            } else if (output.isCorrect! > 0) {
-              tokenAdjustment = sql`${schema.model.tokens} + ${output.isCorrect}`;
+            if (output.isCorrect === false) {
+              tokenAdjustment = sql`GREATEST(0, ${schema.model.tokens} - 50)`;
+            } else if (output.isCorrect === true) {
+              tokenAdjustment = sql`${schema.model.tokens} + 50`;
             }
 
             await tx
               .update(schema.model)
               .set({
-                score: sql`${schema.model.score} + ${output.isCorrect}`,
-                maxScore: sql`${schema.model.maxScore} + 10`,
                 tokens: tokenAdjustment
               })
               .where(eq(schema.model.id, prediction.modelId!));

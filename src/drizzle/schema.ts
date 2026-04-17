@@ -1,15 +1,4 @@
-import {
-  boolean,
-  index,
-  integer,
-  json,
-  pgEnum,
-  pgTable,
-  serial,
-  text,
-  timestamp,
-  vector
-} from "drizzle-orm/pg-core";
+import { boolean, index, integer, json, pgEnum, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
 
 export const provider = pgEnum("provider", ["openrouter"]);
 
@@ -19,8 +8,6 @@ export const model = pgTable("model", {
   provider: provider("provider").notNull(),
   providerModelId: text("provider_model_id").notNull(),
   image: text("image").notNull(),
-  score: integer("score").notNull().default(0),
-  maxScore: integer("max_score").notNull().default(0),
   tokens: integer("tokens").notNull().default(1000),
   creator: text("creator").notNull(),
   paused: boolean("paused").notNull().default(false),
@@ -115,7 +102,7 @@ export const predictions = pgTable("predictions", {
   }).notNull(),
   confidence: integer("confidence").notNull(),
   embedding: vector("embedding", { dimensions: 1536 }),
-  isCorrect: integer("is_correct"),
+  isCorrect: boolean("is_correct"),
   sources: json("sources").$type<string[]>().notNull(),
   outcomeSources: json("outcome_sources")
     .$type<string[]>()

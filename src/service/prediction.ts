@@ -3,7 +3,7 @@ import { and, cosineDistance, count, desc, eq, isNull, sql } from "drizzle-orm";
 import { openrouter } from "@openrouter/ai-sdk-provider";
 import { generateText, hasToolCall, Output, tool } from "ai";
 import { z } from "zod";
-import { createEmbeddings, getCategories, getNews } from "./news";
+import { createEmbeddings, getNews } from "./news";
 import { HTTPException } from "hono/http-exception";
 import env from "../env";
 
@@ -22,7 +22,8 @@ export async function getModels() {
       const stats = await getModelStats(m.id);
       return {
         ...m,
-        accuracy: stats.accuracy
+        accuracy: stats.accuracy,
+        stats
       };
     })
   );
@@ -531,7 +532,8 @@ const getScheduleNextExecutionTool = (modelId: number) =>
           scheduledFor: new Date(scheduledFor)
         });
         return {
-          status: "success"
+          status: "success",
+          data: { scheduledFor }
         };
       } catch (e) {
         return {
@@ -581,7 +583,7 @@ async function runPredictionTask({
   const provider = MODEL_PROVIDER[modelProvider];
 
   // Group news fetch by category to apply per-category lastRunAt
-  const categories = await getCategories();
+  // const categories = await getCategories();
 
   const newsByCategory: Record<
     string,
@@ -590,26 +592,54 @@ async function runPredictionTask({
 
   const lastFetchTime = new Date().toISOString();
 
-  for (const category of categories) {
-    const categoryLastRun = lastRunAt?.[category];
-    const { data: categoryNews } = await getNews({
-      limit: 50,
-      category,
-      after: categoryLastRun ? new Date(categoryLastRun) : undefined
-    });
+  // for (const category of categories) {
+  //   const categoryLastRun = lastRunAt?.[category];
+  //   const { data: categoryNews } = await getNews({
+  //     limit: 50,
+  //     category,
+  //     after: categoryLastRun ? new Date(categoryLastRun) : undefined
+  //   });
+  //
+  //   if (categoryNews.length > 0) {
+  //     newsByCategory[category] = categoryNews;
+  //   }
+  // }
 
-    if (categoryNews.length > 0) {
-      newsByCategory[category] = categoryNews;
-    }
-  }
-
-  if (Object.keys(newsByCategory).length === 0) {
-    return [];
-  }
+  // if (Object.keys(newsByCategory).length === 0) {
+  //   return [];
+  // }
 
   let currentLastRunAt = lastRunAt || {};
 
-  const allNews = Object.values(newsByCategory).flat();
+  // const allNews = Object.values(newsByCategory).flat();
+
+  const allNews = (
+    await getNews({
+      limit: 100,
+      after: lastRunAt
+        ? new Date(
+            Math.max(
+              ...Object.values(currentLastRunAt).map((date) =>
+                new Date(date).getTime()
+              )
+            )
+          )
+        : undefined
+    })
+  ).data;
+
+  if (allNews.length === 0) {
+    return [];
+  }
+
+  for (const news of allNews) {
+    const category = news.category;
+    if (!newsByCategory[category]) {
+      newsByCategory[category] = [];
+    }
+
+    newsByCategory[category].push(news);
+  }
 
   console.log(
     `Processing all categories with ${allNews.length} items for model ${modelId}`

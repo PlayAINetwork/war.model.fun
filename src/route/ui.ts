@@ -231,12 +231,9 @@ router.get("/", async (c) => {
                     </h2>
 
                     <div class="stats">
-                      <div>Score: ${d.stats.score}</div>
                       <div>Accuracy: ${d.stats.accuracy}</div>
                       <div>Total Predictions: ${d.stats.totalPredictions}</div>
-                      <div>
-                        Pending: ${d.stats.pendingUnverifiedPredictions}
-                      </div>
+                      <div>Pending: ${d.stats.pending}</div>
                       <div>Correct: ${d.stats.correct}</div>
                       <div>Tokens: ${d.model.tokens}</div>
                     </div>

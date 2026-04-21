@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { html } from "hono/html";
 import { PredictionService } from "../service";
 import db, { schema } from "../drizzle";
-import { desc, inArray } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 
 const router = new Hono();
 
@@ -22,7 +22,7 @@ router.get("/", async (c) => {
 
   const modelIds = models.map((m) => m.id);
 
-  const [allHistory, allPredictions] = await Promise.all([
+  const [allHistory, allPredictions, toolCountsDb] = await Promise.all([
     db
       .select({
         id: schema.history.id,
@@ -53,7 +53,17 @@ router.get("/", async (c) => {
       .from(schema.predictions)
       .where(inArray(schema.predictions.modelId, modelIds))
       .orderBy(desc(schema.predictions.createdAt))
-      .limit(200)
+      .limit(200),
+
+    db
+      .select({
+        modelId: schema.history.modelId,
+        tool: schema.history.tool,
+        count: sql<number>`count(*)::int`
+      })
+      .from(schema.history)
+      .where(inArray(schema.history.modelId, modelIds))
+      .groupBy(schema.history.modelId, schema.history.tool)
   ]);
 
   // We can fetch data concurrently per model
@@ -61,14 +71,25 @@ router.get("/", async (c) => {
     models.map(async (m) => {
       const stats = await PredictionService.getModelStats(m.id);
 
-      const insights = allHistory.filter(
-        (h) => h.modelId === m.id && h.tool === "insight"
+      const modelHistory = allHistory.filter((h) => h.modelId === m.id);
+
+      const modelToolCounts = toolCountsDb.filter((t) => t.modelId === m.id);
+      const toolCounts = modelToolCounts.reduce(
+        (acc, curr) => {
+          if (curr.tool) {
+            acc[curr.tool] = curr.count;
+          }
+          return acc;
+        },
+        {} as Record<string, number>
       );
-      const executionReasoning = allHistory.filter(
-        (h) => h.modelId === m.id && h.tool === "executionReasoning"
+
+      const insights = modelHistory.filter((h) => h.tool === "insight");
+      const executionReasoning = modelHistory.filter(
+        (h) => h.tool === "executionReasoning"
       );
-      const schedules = allHistory.filter(
-        (h) => h.modelId === m.id && h.tool === "scheduleNextExecution"
+      const schedules = modelHistory.filter(
+        (h) => h.tool === "scheduleNextExecution"
       );
       const predictions = allPredictions.filter((p) => p.modelId === m.id);
 
@@ -138,6 +159,7 @@ router.get("/", async (c) => {
       return {
         model: m,
         stats,
+        toolCounts,
         groupedHistory
       };
     })
@@ -236,6 +258,15 @@ router.get("/", async (c) => {
                       <div>Pending: ${d.stats.pending}</div>
                       <div>Correct: ${d.stats.correct}</div>
                       <div>Tokens: ${d.model.tokens}</div>
+                    </div>
+
+                    <div class="section">
+                      <h3>[ TOOL USAGE ]</h3>
+                      <div class="stats">
+                        ${Object.entries(d.toolCounts).map(
+                          ([tool, count]) => html`<div>${tool}: ${count}</div>`
+                        )}
+                      </div>
                     </div>
 
                     <div class="section">

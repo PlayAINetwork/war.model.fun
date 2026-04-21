@@ -262,11 +262,11 @@ router.get("/", async (c) => {
 
                     <div class="section">
                       <h3>[ TOOL USAGE ]</h3>
-                      <div class="stats">
+                      <ul>
                         ${Object.entries(d.toolCounts).map(
-                          ([tool, count]) => html`<div>${tool}: ${count}</div>`
+                          ([tool, count]) => html`<li>${tool}: ${count}</li>`
                         )}
-                      </div>
+                      </ul>
                     </div>
 
                     <div class="section">

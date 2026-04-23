@@ -1,5 +1,5 @@
 import { openrouter } from "@openrouter/ai-sdk-provider";
-import { streamText } from "ai";
+import { stepCountIs, streamText } from "ai";
 import db, { schema } from "../drizzle";
 import { and, count, desc, eq } from "drizzle-orm";
 import {
@@ -198,6 +198,7 @@ RESPONSE STYLE
     const result = streamText({
       model: openrouter(model.providerModelId),
       tools,
+      stopWhen: stepCountIs(20),
       //@ts-ignore
       messages: currentMessages,
       abortSignal: abortController.signal
@@ -224,7 +225,6 @@ RESPONSE STYLE
       if (done) break;
 
       if (chunk.type === "text-delta") {
-        console.log(chunk);
         text += chunk.delta;
         yield { role: "assistant", content: chunk.delta, tool: null };
       }

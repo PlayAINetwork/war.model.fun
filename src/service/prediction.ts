@@ -184,7 +184,7 @@ export async function getModelStats(modelId: number) {
   };
 }
 
-const getSimilarContent = tool({
+export const getSimilarContent = tool({
   description:
     "Finds similar historical news context and baseline data based on the provided text to help contextualize current events.",
   inputSchema: z.object({
@@ -208,7 +208,7 @@ const getSimilarContent = tool({
   }
 });
 
-const getSearchPredictionsTool = (modelId: number) =>
+export const getSearchPredictionsTool = (modelId: number) =>
   tool({
     description:
       "Searches for existing active predictions to check for redundancy before making a new prediction. MUST be used before makePrediction.",
@@ -231,7 +231,7 @@ const getSearchPredictionsTool = (modelId: number) =>
     }
   });
 
-const getSearchInsightsTool = (modelId: number) =>
+export const getSearchInsightsTool = (modelId: number) =>
   tool({
     description:
       "Searches for existing insights to check for redundancy before making a new insight.",
@@ -258,7 +258,72 @@ const getSearchInsightsTool = (modelId: number) =>
     }
   });
 
-const perplexitySearch = tool({
+export const getGetAllPredictionsTool = (modelId: number) =>
+  tool({
+    description:
+      "Gets all predictions made by the model, ordered by date descending. Useful to see what the model has predicted overall.",
+    inputSchema: z.object({
+      page: z
+        .number()
+        .optional()
+        .describe("The page number to fetch. Defaults to 1."),
+      limit: z
+        .number()
+        .optional()
+        .describe("The number of items per page. Defaults to 20.")
+    }),
+    execute: async ({ page, limit }) => {
+      try {
+        const results = await getModelPredictions({ modelId, page, limit });
+        return {
+          status: "success",
+          data: results
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while getting predictions: ${e}`
+        };
+      }
+    }
+  });
+
+export const getGetAllInsightsTool = (modelId: number) =>
+  tool({
+    description:
+      "Gets all insights made by the model, ordered by date descending. Useful to see the model's past reasonings and insights.",
+    inputSchema: z.object({
+      page: z
+        .number()
+        .optional()
+        .describe("The page number to fetch. Defaults to 1."),
+      limit: z
+        .number()
+        .optional()
+        .describe("The number of items per page. Defaults to 20.")
+    }),
+    execute: async ({ page, limit }) => {
+      try {
+        const results = await getModelHistory({
+          modelId,
+          page,
+          limit,
+          onlyInsights: true
+        });
+        return {
+          status: "success",
+          data: results
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while getting insights: ${e}`
+        };
+      }
+    }
+  });
+
+export const perplexitySearch = tool({
   description:
     "Searches the real-time internet using Perplexity Search to investigate missing crucial details, deep context, or public reactions.",
   inputSchema: z.object({
@@ -283,7 +348,7 @@ const perplexitySearch = tool({
   }
 });
 
-const getFlightDelays = tool({
+export const getFlightDelays = tool({
   description:
     "Gets real-time flight delays data to monitor global travel disruptions.",
   inputSchema: z.object({}),
@@ -309,7 +374,7 @@ const getFlightDelays = tool({
   }
 });
 
-const getCryptoQuotes = tool({
+export const getCryptoQuotes = tool({
   description: "Gets real-time crypto quotes and market data.",
   inputSchema: z.object({}),
   execute: async () => {
@@ -334,7 +399,7 @@ const getCryptoQuotes = tool({
   }
 });
 
-const getMarketImplications = tool({
+export const getMarketImplications = tool({
   description: "Gets current market implications and economic outlook data.",
   inputSchema: z.object({}),
   execute: async () => {
@@ -359,7 +424,7 @@ const getMarketImplications = tool({
   }
 });
 
-const getHyperliquidFlow = tool({
+export const getHyperliquidFlow = tool({
   description: "Gets hyperliquid flow data to monitor deep market liquidity.",
   inputSchema: z.object({}),
   execute: async () => {
@@ -384,7 +449,7 @@ const getHyperliquidFlow = tool({
   }
 });
 
-const getFuelPrices = tool({
+export const getFuelPrices = tool({
   description: "Gets current global fuel prices.",
   inputSchema: z.object({}),
   execute: async () => {
@@ -409,7 +474,7 @@ const getFuelPrices = tool({
   }
 });
 
-const insight = tool({
+export const insight = tool({
   description:
     "Concludes the analysis by providing a definitive 1-2 sentence summary and your full step-by-step chain of thought. MUST be a definitive, one-shot standalone summary. DO NOT ask any follow-up questions. MANDATORY: You must use the `searchInsights` tool before calling this tool to ensure your insight is novel.",
   inputSchema: z.object({
@@ -438,7 +503,7 @@ const insight = tool({
   }
 });
 
-const getMakePredictionTool = (modelId: number) =>
+export const getMakePredictionTool = (modelId: number) =>
   tool({
     description: `Lets the model predict an event based on the available data. IT IS CRITICAL AND MANDATORY to use the \`searchPredictions\` tool first to check if a similar prediction already exists. DO NOT SKIP THIS STEP under any circumstances. If a similar prediction exists, do not make the prediction. Only make the prediction if it's novel and has a strong basis in the data. Predictions must be highly objective, strictly measurable, and verifiable (e.g., specific numbers, exact dates, or discrete measurable actions) rather than subjective (e.g., avoiding vague terms like "crash" without a numerical value). Do not predict obvious or highly expected events (like routine annual events, e.g., an Apple event happening twice a year), and do not state that a subsequent version of a product won't release if the current year's version has already been released. Do not pass off obvious news as a prediction.`,
     inputSchema: z.object({
@@ -516,7 +581,7 @@ const getMakePredictionTool = (modelId: number) =>
     }
   });
 
-const getScheduleNextExecutionTool = (modelId: number) =>
+export const getScheduleNextExecutionTool = (modelId: number) =>
   tool({
     description:
       "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions. Before calling this, you must call the executionReasoning tool to explain why you chose this next time.",
@@ -544,7 +609,7 @@ const getScheduleNextExecutionTool = (modelId: number) =>
     }
   });
 
-const executionReasoning = tool({
+export const executionReasoning = tool({
   description:
     "Explain your execution reasoning. Call this tool before calling scheduleNextExecution. Explain token considerations, why you chose the next execution time, and whether you chose to make a prediction or wait for outcomes to earn tokens and extend life.",
   inputSchema: z.object({

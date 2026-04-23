@@ -1,4 +1,15 @@
-import { boolean, index, integer, json, pgEnum, pgTable, serial, text, timestamp, vector } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  json,
+  pgEnum,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  vector
+} from "drizzle-orm/pg-core";
 
 export const provider = pgEnum("provider", ["openrouter"]);
 
@@ -109,6 +120,22 @@ export const predictions = pgTable("predictions", {
     .notNull()
     .default([]),
   outcomeReasoning: text("outcome_reasoning"),
+  createdAt: timestamp("created_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull()
+});
+
+export const chatHistory = pgTable("chat_history", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => model.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  content: text("content").notNull(),
+  tool: text("tool"),
   createdAt: timestamp("created_at", {
     withTimezone: true
   })

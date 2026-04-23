@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { NewsRouter, PredictionRouter, UIRouter } from "./route";
+import { ChatRouter, NewsRouter, PredictionRouter, UIRouter } from "./route";
 import { serveStatic } from "hono/bun";
 import env from "./env";
 import { showRoutes } from "hono/dev";
@@ -15,6 +15,7 @@ app.use(cors());
 app.route("/", UIRouter);
 app.route("/news", NewsRouter);
 app.route("/prediction", PredictionRouter);
+app.route("/chat", ChatRouter);
 
 app.get("/api/*", async (c) => {
   const path = c.req.path.replace(/^\/api/, "");

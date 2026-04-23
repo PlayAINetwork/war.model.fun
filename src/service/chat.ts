@@ -1,7 +1,7 @@
 import { openrouter } from "@openrouter/ai-sdk-provider";
 import { streamText } from "ai";
 import db, { schema } from "../drizzle";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import {
   getCryptoQuotes,
   getFlightDelays,
@@ -16,17 +16,38 @@ import {
   perplexitySearch
 } from "./prediction";
 
-export async function getChatHistory(userId: string, modelId: number) {
-  return db
-    .select()
-    .from(schema.chatHistory)
-    .where(
-      and(
-        eq(schema.chatHistory.userId, userId),
-        eq(schema.chatHistory.modelId, modelId)
-      )
-    )
-    .orderBy(desc(schema.chatHistory.createdAt));
+export async function getChatHistory(
+  userId: string,
+  modelId: number,
+  page: number = 1,
+  limit: number = 20
+) {
+  const offset = (page - 1) * limit;
+
+  const condition = and(
+    eq(schema.chatHistory.userId, userId),
+    eq(schema.chatHistory.modelId, modelId)
+  );
+
+  const [data, [total]] = await Promise.all([
+    db
+      .select()
+      .from(schema.chatHistory)
+      .where(condition)
+      .orderBy(desc(schema.chatHistory.createdAt))
+      .limit(limit)
+      .offset(offset),
+    db.select({ total: count() }).from(schema.chatHistory).where(condition)
+  ]);
+
+  return {
+    data,
+    pagination: {
+      page,
+      limit,
+      total: total!.total
+    }
+  };
 }
 
 export async function resetChatHistory(userId: string, modelId: number) {
@@ -109,7 +130,8 @@ export async function* getChatResponse({
       throw new Error("Model not found");
     }
 
-    const history = await getChatHistory(userId, modelId);
+    const historyResponse = await getChatHistory(userId, modelId, 1, 50);
+    const history = historyResponse.data;
 
     const system = `You are ${model.name}, an elite AI forecasting and analytical agent. Your primary purpose in this interactive chat interface is to explain, discuss, and analyze your existing predictions, past insights, and current geopolitical and economic events with the user.
 

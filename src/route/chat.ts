@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
+import { paginationSchema } from "../util";
 import { getChatHistory, getChatResponse, resetChatHistory } from "../service/chat";
 import { streamSSE } from "hono/streaming";
 
@@ -10,11 +11,11 @@ app.get(
   "/history",
   zValidator(
     "query",
-    z.object({ modelId: z.coerce.number(), userId: z.string() })
+    paginationSchema.extend({ modelId: z.coerce.number(), userId: z.string() })
   ),
   async (c) => {
-    const { modelId, userId } = c.req.valid("query");
-    return c.json(await getChatHistory(userId, modelId));
+    const { modelId, userId, page, limit } = c.req.valid("query");
+    return c.json(await getChatHistory(userId, modelId, page, limit));
   }
 );
 

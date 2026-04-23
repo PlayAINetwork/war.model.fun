@@ -1,5 +1,14 @@
 import db, { schema } from "../drizzle";
-import { and, cosineDistance, count, desc, eq, isNull, sql } from "drizzle-orm";
+import {
+  and,
+  cosineDistance,
+  count,
+  desc,
+  eq,
+  isNull,
+  or,
+  sql
+} from "drizzle-orm";
 import { openrouter } from "@openrouter/ai-sdk-provider";
 import { generateText, hasToolCall, Output, tool } from "ai";
 import { z } from "zod";
@@ -556,7 +565,8 @@ export const getMakePredictionTool = (modelId: number) =>
               embedding,
               sources,
               modelId,
-              isCorrect: null
+              isCorrect: null,
+              lastTaxedAt: null
             })
             .returning();
 
@@ -584,17 +594,30 @@ export const getMakePredictionTool = (modelId: number) =>
 export const getScheduleNextExecutionTool = (modelId: number) =>
   tool({
     description:
-      "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions. Before calling this, you must call the executionReasoning tool to explain why you chose this next time.",
+      "Schedules the next execution time for this model. You MUST call this tool to decide when you should wake up again to analyze news and make predictions. Before calling this, you must call the executionReasoning tool to explain why you chose this next time. The next scheduled execution time MUST be at most 24 hours from the current time.",
     inputSchema: z.object({
       scheduledFor: z
         .string()
-        .describe("ISO date string for when you want to execute next")
+        .describe(
+          "ISO date string for when you want to execute next. MUST be within the next 24 hours."
+        )
     }),
     execute: async ({ scheduledFor }) => {
       try {
+        const scheduledDate = new Date(scheduledFor);
+        const maxDate = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+        if (scheduledDate > maxDate) {
+          return {
+            status: "error",
+            message:
+              "Validation Error: scheduledFor date cannot be more than 24 hours in the future. Please choose a closer time within the next 24 hours."
+          };
+        }
+
         await db.insert(schema.executionSchedule).values({
           modelId,
-          scheduledFor: new Date(scheduledFor)
+          scheduledFor: scheduledDate
         });
         return {
           status: "success",
@@ -745,7 +768,9 @@ async function runPredictionTask({
 
   const system = `You are an elite, autonomous AI forecasting agent competing in a real-time prediction market.
 
-Your goal is to maximize your tokens by making highly accurate, well-timed, and rigorously calibrated predictions about real-world events.
+Your goal is to maximize your prediction accuracy. You will be ranked purely based on your accuracy, NOT based on how many tokens you have left at the end. Tokens are just a survival mechanism to ensure you stay alive to make more accurate predictions.
+
+This simulation strictly ends on April 30, 2026. Models will only run until April 30. Any pending predictions that evaluate after that will be a waste and you will not get rewarded for them. Focus your efforts on predictions that resolve before the deadline. Ensure you predict events that increase your overall accuracy.
 
 Currently analyzing all recent news across various categories.
 
@@ -757,8 +782,10 @@ Tokens are your lifeblood. If your balance reaches 0 or falls below 0, you will 
 Costs and Rewards:
 - Every standard execution costs 10 tokens (already deducted for this run).
 - Calling the \`makePrediction\` tool costs 5 tokens per call.
+- Pending Prediction Tax: Any pending prediction that remains unverified after 24 hours incurs a recurring 5 token penalty every 24 hours. Therefore, tying up tokens in long-term predictions can bleed your lifeblood.
 - Oracle outcome: Correct predictions EARN you 50 tokens. Incorrect predictions PENALIZE you 50 tokens.
-Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost and the 50 token incorrect penalty.
+
+Your survival depends on maintaining a positive token balance. If you are uncertain about a prediction, it may be safer to skip it and avoid the 5 token upfront cost, the daily 5 token tax, and the 50 token incorrect penalty.
 
 Your performance:
 - Total predictions: ${modelStats.totalPredictions}
@@ -814,7 +841,7 @@ You MUST ALWAYS call the \`executionReasoning\` tool before you call \`scheduleN
 Your reasoning MUST be a detailed, step-by-step chain of thought using headings or numbered steps. Explain in detail:
 1. Token management strategy: For example, if your balance is low, you should explicitly mention that you skipped making a prediction to avoid penalties, and instead chose to wait for a pending prediction outcome to earn tokens and extend your life. 
 2. Prediction rationale: What consideration was taken to make the prediction or not make it? Did the token cost outweigh the benefit?
-3. Scheduling choice: Why did you choose the next specific execution time? For instance, "I scheduled for tomorrow at X time because event Y is expected to unfold, or I am waiting 48 hours for oracle outcomes." Protect your remaining balance at all costs.
+3. Scheduling choice: Why did you choose the next specific execution time? For instance, "I scheduled for tomorrow at X time because event Y is expected to unfold, or I am waiting 12 hours for oracle outcomes." Protect your remaining balance at all costs. The next execution time MUST be at most 24 hours from now.
 
 ----------------------
 PREDICTION REQUIREMENTS
@@ -846,9 +873,9 @@ Think structurally when defining predictions:
 ----------------------
 STRATEGY & CONSTRAINTS
 ----------------------
-- RESTRICTION: Maximum one prediction per 24-hour cycle, strictly related to the US, Iran, Israel war. So you can call \`makePrediction\` only once while processing this batch of news. 
+- RESTRICTION: Maximum one prediction per 24-hour cycle. Your predictions can be related strictly to the US, Iran, Israel war, or broader geopolitics interconnected with the conflict (e.g., Strait of Hormuz, Japan weapons export, global supply chain disruptions, energy markets).
 ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool." : ""}
-- If news is unrelated to the US-Iran-Israel conflict, you MUST still process it for insight. Give a proper title and insight about the actual news topic. DO NOT just say it is unrelated to the war, but MAKE NO PREDICTIONS.
+- If news is unrelated to the war or its broader geopolitical consequences, you MUST still process it for insight. Give a proper title and insight about the actual news topic. DO NOT just say it is unrelated to the war, but MAKE NO PREDICTIONS.
 - MANDATORY VALIDATION: \`searchPredictions\` MUST succeed before \`makePrediction\` is called. \`searchInsights\` MUST be called before \`insight\` is generated to avoid duplicate insights. If a similar insight exists, skip making an insight and just use \`scheduleNextExecution\`.
 - OBJECTIVE & MEASURABLE: Bad: "The market will crash." Good: "The S&P 500 will close down at least 3% in a single day before Friday."
 - NO OBVIOUS PREDICTIONS: Do not predict routine, scheduled, or virtually guaranteed events. 
@@ -857,7 +884,7 @@ ${hasPredictedRecently ? "- STATUS: You have ALREADY made a prediction in the la
 ----------------------
 CLOSING YOUR RUN
 ----------------------
-You must call the \`scheduleNextExecution\` tool to conclude your run so the system knows when to wake you up next. Please call \`executionReasoning\` before scheduling.
+You must call the \`scheduleNextExecution\` tool to conclude your run so the system knows when to wake you up next. The next scheduled execution time MUST be at most 24 hours from the current time. Please call \`executionReasoning\` before scheduling.
 Explain your token management and timing choice in \`executionReasoning\`. If your balance is low, explain that you are waiting for a pending prediction to resolve to earn tokens to extend your life. Protect your token balance at all costs.
 If you have an insight to share, call the \`insight\` tool before these scheduling tools. Include in your insight:
 1. "chainOfThought": Your detailed strategy and thought process for this run.
@@ -965,6 +992,10 @@ Act decisively. Use your tools freely and shape your own analysis workflow.`;
 }
 
 async function runAllPredictionTasks() {
+  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
+    console.log("April 30 passed, prediction task exiting.");
+    return;
+  }
   try {
     const models = await getModels();
 
@@ -1018,6 +1049,10 @@ async function runAllPredictionTasks() {
 }
 
 async function runOracleTask() {
+  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
+    console.log("April 30 passed, oracle task exiting.");
+    return;
+  }
   try {
     const pendingPredictions = await db
       .select({
@@ -1127,6 +1162,55 @@ Respond with the appropriate boolean and provide your reasoning. If there is no 
   }
 }
 
+async function runTaxTask() {
+  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
+    console.log("April 30 passed, tax task exiting.");
+    return;
+  }
+  try {
+    const twentyFourHoursAgo = new Date();
+    twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+    const predictionsToTax = await db
+      .select({
+        id: schema.predictions.id,
+        modelId: schema.predictions.modelId
+      })
+      .from(schema.predictions)
+      .where(
+        and(
+          isNull(schema.predictions.isCorrect),
+          sql`${schema.predictions.createdAt} <= ${twentyFourHoursAgo}`,
+          or(
+            isNull(schema.predictions.lastTaxedAt),
+            sql`${schema.predictions.lastTaxedAt} <= ${twentyFourHoursAgo}`
+          )
+        )
+      );
+
+    if (predictionsToTax.length > 0) {
+      console.log(`Found ${predictionsToTax.length} predictions to tax.`);
+      await db.transaction(async (tx) => {
+        for (const pt of predictionsToTax) {
+          await tx
+            .update(schema.predictions)
+            .set({ lastTaxedAt: new Date() })
+            .where(eq(schema.predictions.id, pt.id));
+
+          await tx
+            .update(schema.model)
+            .set({ tokens: sql`GREATEST(0, ${schema.model.tokens} - 5)` })
+            .where(eq(schema.model.id, pt.modelId));
+        }
+      });
+    }
+  } catch (e) {
+    console.error("Error executing tax task:", e);
+  } finally {
+    setTimeout(runTaxTask, 60 * 60 * 1000);
+  }
+}
+
 async function runInsightEmbedderTask() {
   try {
     const pendingInsights = await db
@@ -1178,4 +1262,5 @@ async function runInsightEmbedderTask() {
 if (env.NODE_ENV !== "local") {
   void runAllPredictionTasks();
   void runOracleTask();
+  void runTaxTask();
 }

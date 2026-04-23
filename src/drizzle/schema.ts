@@ -120,6 +120,9 @@ export const predictions = pgTable("predictions", {
     .notNull()
     .default([]),
   outcomeReasoning: text("outcome_reasoning"),
+  lastTaxedAt: timestamp("last_taxed_at", {
+    withTimezone: true
+  }),
   createdAt: timestamp("created_at", {
     withTimezone: true
   })

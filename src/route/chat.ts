@@ -2,7 +2,11 @@ import { Hono } from "hono";
 import { zValidator } from "@hono/zod-validator";
 import { z } from "zod";
 import { paginationSchema } from "../util";
-import { getChatHistory, getChatResponse, resetChatHistory } from "../service/chat";
+import {
+  getChatHistory,
+  getChatResponse,
+  resetChatHistory
+} from "../service/chat";
 import { streamSSE } from "hono/streaming";
 
 const app = new Hono();

@@ -22,12 +22,7 @@ app.get("/api/*", async (c) => {
   const search = new URL(c.req.url).search;
   const url = `https://api.worldmonitor.app/api${path}${search}`;
 
-  const response = await fetch(url, {
-    method: "GET",
-    headers: {
-      origin: "https://www.worldmonitor.app"
-    }
-  });
+  const response = await fetch(url);
 
   const data = await response.json();
 

@@ -269,16 +269,23 @@ router.get("/", async (c) => {
                       ${d.strategy
                         ? html`
                             <div class="item">
-                              <pre style="white-space: pre-wrap;">${d.strategy.strategy}</pre>
+                              <pre style="white-space: pre-wrap;">
+${d.strategy.strategy}</pre
+                              >
                               <div class="meta" style="margin-top: 5px;">
                                 Rationale: ${d.strategy.rationale}
                               </div>
                               <div class="meta">
-                                Set on: ${new Date(d.strategy.createdAt).toLocaleString()}
+                                Set on:
+                                ${new Date(
+                                  d.strategy.createdAt
+                                ).toLocaleString()}
                               </div>
                             </div>
                           `
-                        : html`<p style="opacity: 0.6;">No strategy set yet</p>`}
+                        : html`<p style="opacity: 0.6;">
+                            No strategy set yet
+                          </p>`}
                     </div>
 
                     <div class="section">

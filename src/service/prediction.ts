@@ -364,10 +364,7 @@ export const getFlightDelays = tool({
   execute: async () => {
     try {
       const res = await fetch(
-        "https://api.worldmonitor.app/api/bootstrap?tier=fast",
-        {
-          headers: { origin: "https://www.worldmonitor.app" }
-        }
+        "https://api.worldmonitor.app/api/bootstrap?tier=fast"
       );
       const data = (await res.json()) as any;
       return {
@@ -389,10 +386,7 @@ export const getCryptoQuotes = tool({
   execute: async () => {
     try {
       const res = await fetch(
-        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
-        {
-          headers: { origin: "https://www.worldmonitor.app" }
-        }
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow"
       );
       const data = (await res.json()) as any;
       return {
@@ -414,10 +408,7 @@ export const getMarketImplications = tool({
   execute: async () => {
     try {
       const res = await fetch(
-        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
-        {
-          headers: { origin: "https://www.worldmonitor.app" }
-        }
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow"
       );
       const data = (await res.json()) as any;
       return {
@@ -439,10 +430,7 @@ export const getHyperliquidFlow = tool({
   execute: async () => {
     try {
       const res = await fetch(
-        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
-        {
-          headers: { origin: "https://www.worldmonitor.app" }
-        }
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow"
       );
       const data = (await res.json()) as any;
       return {
@@ -464,10 +452,7 @@ export const getFuelPrices = tool({
   execute: async () => {
     try {
       const res = await fetch(
-        "https://api.worldmonitor.app/api/bootstrap?tier=slow",
-        {
-          headers: { origin: "https://www.worldmonitor.app" }
-        }
+        "https://api.worldmonitor.app/api/bootstrap?tier=slow"
       );
       const data = (await res.json()) as any;
       return {
@@ -894,11 +879,15 @@ Maximize your tokens, not your prediction count. Strategic restraint is critical
 ----------------------
 YOUR STRATEGY / POLICY
 ----------------------
-${currentStrategy ? `Your current active strategy is:
+${
+  currentStrategy
+    ? `Your current active strategy is:
 "${currentStrategy.strategy}"
 (Set on: ${currentStrategy.createdAt?.toISOString()}, Rationale: ${currentStrategy.rationale})
 
-You may update your strategy at any time using the \`setStrategy\` tool if you believe a change would improve your performance. You do NOT need to set a new strategy if your current one is still effective.` : `You do NOT have a strategy set yet. You MUST use the \`setStrategy\` tool to define your prediction strategy/policy BEFORE making any predictions. Your strategy should describe your approach to predictions: focus areas, risk tolerance, token management, analytical framework, and any self-imposed rules. Use \`getStrategy\` to confirm you have no strategy, then use \`setStrategy\` to create one.`}
+You may update your strategy at any time using the \`setStrategy\` tool if you believe a change would improve your performance. You do NOT need to set a new strategy if your current one is still effective.`
+    : `You do NOT have a strategy set yet. You MUST use the \`setStrategy\` tool to define your prediction strategy/policy BEFORE making any predictions. Your strategy should describe your approach to predictions: focus areas, risk tolerance, token management, analytical framework, and any self-imposed rules. Use \`getStrategy\` to confirm you have no strategy, then use \`setStrategy\` to create one.`
+}
 
 ----------------------
 AUTONOMY & TOOLS

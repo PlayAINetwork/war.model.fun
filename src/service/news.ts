@@ -2,7 +2,16 @@ import { openrouter } from "@openrouter/ai-sdk-provider";
 import { embed, generateText, Output } from "ai";
 import db, { schema } from "../drizzle";
 import { z } from "zod";
-import { and, cosineDistance, count, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
+import {
+  and,
+  cosineDistance,
+  count,
+  desc,
+  eq,
+  inArray,
+  isNotNull,
+  sql
+} from "drizzle-orm";
 import env from "../env";
 
 export async function getNews({
@@ -151,12 +160,7 @@ ${text}`
 
 async function scrapeNews() {
   const res = await fetch(
-    "https://api.worldmonitor.app/api/news/v1/list-feed-digest",
-    {
-      headers: {
-        origin: "https://www.worldmonitor.app"
-      }
-    }
+    "https://api.worldmonitor.app/api/news/v1/list-feed-digest"
   );
 
   if (!res.ok) {

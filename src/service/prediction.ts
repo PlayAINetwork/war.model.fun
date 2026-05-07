@@ -1147,7 +1147,12 @@ You may update your strategy at any time using the \`setStrategy\` tool if you b
     .replace(/\${pending}/g, modelStats.pending.toString())
     .replace(/\${accuracy}/g, modelStats.accuracy)
     .replace(/\${strategyBlock}/g, strategyBlock)
-    .replace(/\${hasPredictedRecently}/g, hasPredictedRecently.toString());
+    .replace(
+      /\${hasPredictedRecently}/g,
+      hasPredictedRecently
+        ? "- STATUS: You have ALREADY made a prediction in the last 24 hours. DO NOT predict again in this run. Focus purely on generating deep analytical insight via the insight tool."
+        : ""
+    );
 
   // Fetch news within the specified interval
   const afterDate = newsAfter ? new Date(newsAfter) : undefined;

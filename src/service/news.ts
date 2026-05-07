@@ -19,13 +19,15 @@ export async function getNews({
   limit = 20,
   category,
   search,
-  after
+  after,
+  before
 }: {
   page?: number;
   limit?: number;
   category?: string;
   search?: string;
   after?: Date | null;
+  before?: Date | null;
 } = {}) {
   const offset = (page - 1) * limit;
 
@@ -42,9 +44,12 @@ export async function getNews({
   const afterClause = after
     ? sql`${schema.news.publishedAt} > ${after}`
     : undefined;
+  const beforeClause = before
+    ? sql`${schema.news.publishedAt} <= ${before}`
+    : undefined;
 
   const whereClause =
-    and(categoryClause, searchClause, afterClause) ?? undefined;
+    and(categoryClause, searchClause, afterClause, beforeClause) ?? undefined;
 
   const [data, [total]] = await Promise.all([
     db

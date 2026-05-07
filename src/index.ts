@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { ChatRouter, NewsRouter, PredictionRouter, UIRouter } from "./route";
+import {
+  ChatRouter,
+  NewsRouter,
+  PredictionRouter,
+  UIRouter,
+  PlaygroundRouter
+} from "./route";
 import { serveStatic } from "hono/bun";
 import env from "./env";
 import { showRoutes } from "hono/dev";
@@ -16,6 +22,7 @@ app.route("/", UIRouter);
 app.route("/news", NewsRouter);
 app.route("/prediction", PredictionRouter);
 app.route("/chat", ChatRouter);
+app.route("/playground", PlaygroundRouter);
 
 app.get("/api/*", async (c) => {
   const path = c.req.path.replace(/^\/api/, "");
@@ -52,5 +59,5 @@ if (env.NODE_ENV === "local") {
 
 export default {
   fetch: app.fetch,
-  idleTimeout: 60
+  idleTimeout: 0
 };

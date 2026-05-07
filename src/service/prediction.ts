@@ -1087,6 +1087,208 @@ Act decisively. Use your tools freely and shape your own analysis workflow.`;
   await runInsightEmbedderTask();
 }
 
+export async function runTestPrediction({
+  modelId,
+  systemPrompt,
+  newsAfter,
+  newsBefore,
+  newsLimit = 300
+}: {
+  modelId: number;
+  systemPrompt: string;
+  newsAfter?: string;
+  newsBefore?: string;
+  newsLimit?: number;
+}) {
+  const [modelData] = await db
+    .select()
+    .from(schema.model)
+    .where(eq(schema.model.id, modelId));
+
+  if (!modelData) {
+    throw new HTTPException(404, { message: "Model not found" });
+  }
+
+  const provider = MODEL_PROVIDER[modelData.provider];
+
+  // Fetch interpolation data
+  const [modelStats, currentStrategy] = await Promise.all([
+    getModelStats(modelId),
+    getModelStrategy(modelId)
+  ]);
+
+  const twentyFourHoursAgo = new Date();
+  twentyFourHoursAgo.setHours(twentyFourHoursAgo.getHours() - 24);
+
+  const [recentPredictions] = await db
+    .select({ total: count() })
+    .from(schema.predictions)
+    .where(
+      and(
+        eq(schema.predictions.modelId, modelId),
+        sql`${schema.predictions.createdAt} >= ${twentyFourHoursAgo}`
+      )
+    );
+  const hasPredictedRecently = recentPredictions!.total > 0;
+
+  const strategyBlock = currentStrategy
+    ? `Your current active strategy is:
+"${currentStrategy.strategy}"
+(Set on: ${currentStrategy.createdAt?.toISOString()}, Rationale: ${currentStrategy.rationale})
+
+You may update your strategy at any time using the \`setStrategy\` tool if you believe a change would improve your performance. You do NOT need to set a new strategy if your current one is still effective.`
+    : `You do NOT have a strategy set yet. You MUST use the \`setStrategy\` tool to define your prediction strategy/policy BEFORE making any predictions. Your strategy should describe your approach to predictions: focus areas, risk tolerance, token management, analytical framework, and any self-imposed rules. Use \`getStrategy\` to confirm you have no strategy, then use \`setStrategy\` to create one.`;
+
+  // Interpolate variables
+  const finalSystemPrompt = systemPrompt
+    .replace(/\${tokens}/g, modelData.tokens.toString())
+    .replace(/\${totalPredictions}/g, modelStats.totalPredictions.toString())
+    .replace(/\${correct}/g, modelStats.correct.toString())
+    .replace(/\${pending}/g, modelStats.pending.toString())
+    .replace(/\${accuracy}/g, modelStats.accuracy)
+    .replace(/\${strategyBlock}/g, strategyBlock)
+    .replace(/\${hasPredictedRecently}/g, hasPredictedRecently.toString());
+
+  // Fetch news within the specified interval
+  const afterDate = newsAfter ? new Date(newsAfter) : undefined;
+  const beforeDate = newsBefore ? new Date(newsBefore) : undefined;
+
+  const filteredNews = (
+    await getNews({
+      limit: newsLimit,
+      after: afterDate,
+      before: beforeDate
+    })
+  ).data;
+
+  // No-op tool versions that don't save to DB
+  const noopMakePrediction = tool({
+    description: getMakePredictionTool(modelId).description!,
+    inputSchema: z.object({
+      prediction: z.string(),
+      reasoning: z.string(),
+      happensBefore: z.string(),
+      confidence: z.number().min(0).max(100),
+      category: z.string(),
+      sources: z.array(z.string())
+    }),
+    execute: async (data) => ({
+      status: "success" as const,
+      data: {
+        ...data,
+        id: -1,
+        modelId,
+        isCorrect: null,
+        note: "[TEST MODE - not saved]"
+      }
+    })
+  });
+
+  const noopScheduleNextExecution = tool({
+    description: getScheduleNextExecutionTool(modelId).description!,
+    inputSchema: z.object({
+      scheduledFor: z.string()
+    }),
+    execute: async (data) => ({
+      status: "success" as const,
+      data: { ...data, note: "[TEST MODE - not saved]" }
+    })
+  });
+
+  const noopSetStrategy = tool({
+    description: getSetStrategyTool(modelId).description!,
+    inputSchema: z.object({
+      strategy: z.string(),
+      rationale: z.string()
+    }),
+    execute: async (data) => ({
+      status: "success" as const,
+      data: { ...data, note: "[TEST MODE - not saved]" }
+    })
+  });
+
+  const toolCallId = `getNews-test-${Date.now()}`;
+  const messages = [
+    { role: "system" as const, content: finalSystemPrompt },
+    {
+      role: "assistant" as const,
+      content: [
+        {
+          type: "tool-call" as const,
+          toolCallId,
+          toolName: "getNews",
+          input: {}
+        }
+      ]
+    },
+    {
+      role: "tool" as const,
+      content: [
+        {
+          type: "tool-result" as const,
+          toolName: "getNews",
+          output: {
+            type: "json",
+            value: { status: "success", data: JSON.stringify(filteredNews) }
+          },
+          toolCallId
+        }
+      ]
+    }
+  ];
+
+  const { steps } = await generateText({
+    model: provider(modelData.providerModelId),
+    tools: {
+      getSimilarContent,
+      searchPredictions: getSearchPredictionsTool(modelId),
+      searchInsights: getSearchInsightsTool(modelId),
+      perplexitySearch,
+      getFlightDelays,
+      getCryptoQuotes,
+      getMarketImplications,
+      getHyperliquidFlow,
+      getFuelPrices,
+      makePrediction: noopMakePrediction,
+      executionReasoning,
+      scheduleNextExecution: noopScheduleNextExecution,
+      insight,
+      getStrategy: getGetStrategyTool(modelId),
+      setStrategy: noopSetStrategy
+    },
+    stopWhen: [hasToolCall("scheduleNextExecution")],
+    //@ts-ignore
+    messages
+  });
+
+  // Collect all step results for the frontend
+  const results = steps.map((step, i) => ({
+    stepIndex: i,
+    text: step.text || null,
+    toolCalls:
+      step.toolCalls?.map((tc: any) => ({
+        toolName: tc.toolName,
+        input: tc.args
+      })) || [],
+    toolResults:
+      step.toolResults?.map((tr) => ({
+        toolName: tr.toolName,
+        output: tr.output
+      })) || []
+  }));
+
+  return {
+    model: {
+      id: modelData.id,
+      name: modelData.name,
+      providerModelId: modelData.providerModelId
+    },
+    newsCount: filteredNews.length,
+    totalSteps: steps.length,
+    steps: results
+  };
+}
+
 async function runAllPredictionTasks() {
   if (new Date() > new Date("2026-05-30T23:59:59Z")) {
     console.log("May 30 passed, prediction task exiting.");

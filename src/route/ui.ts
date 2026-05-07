@@ -69,7 +69,10 @@ router.get("/", async (c) => {
   // We can fetch data concurrently per model
   const modelData = await Promise.all(
     models.map(async (m) => {
-      const stats = await PredictionService.getModelStats(m.id);
+      const [stats, strategy] = await Promise.all([
+        PredictionService.getModelStats(m.id),
+        PredictionService.getModelStrategy(m.id)
+      ]);
 
       const modelHistory = allHistory.filter((h) => h.modelId === m.id);
 
@@ -159,6 +162,7 @@ router.get("/", async (c) => {
       return {
         model: m,
         stats,
+        strategy,
         toolCounts,
         groupedHistory
       };
@@ -258,6 +262,23 @@ router.get("/", async (c) => {
                       <div>Pending: ${d.stats.pending}</div>
                       <div>Correct: ${d.stats.correct}</div>
                       <div>Tokens: ${d.model.tokens}</div>
+                    </div>
+
+                    <div class="section">
+                      <h3>[ STRATEGY ]</h3>
+                      ${d.strategy
+                        ? html`
+                            <div class="item">
+                              <pre style="white-space: pre-wrap;">${d.strategy.strategy}</pre>
+                              <div class="meta" style="margin-top: 5px;">
+                                Rationale: ${d.strategy.rationale}
+                              </div>
+                              <div class="meta">
+                                Set on: ${new Date(d.strategy.createdAt).toLocaleString()}
+                              </div>
+                            </div>
+                          `
+                        : html`<p style="opacity: 0.6;">No strategy set yet</p>`}
                     </div>
 
                     <div class="section">

@@ -145,3 +145,23 @@ export const chatHistory = pgTable("chat_history", {
     .defaultNow()
     .notNull()
 });
+
+export const modelStrategy = pgTable("model_strategy", {
+  id: serial("id").primaryKey(),
+  modelId: integer("model_id")
+    .notNull()
+    .references(() => model.id, { onDelete: "cascade" }),
+  strategy: text("strategy").notNull(),
+  rationale: text("rationale").notNull(),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull(),
+  updatedAt: timestamp("updated_at", {
+    withTimezone: true
+  })
+    .defaultNow()
+    .notNull()
+});

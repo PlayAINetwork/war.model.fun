@@ -655,6 +655,100 @@ export const executionReasoning = tool({
   }
 });
 
+export async function getModelStrategy(modelId: number) {
+  const [strategy] = await db
+    .select()
+    .from(schema.modelStrategy)
+    .where(
+      and(
+        eq(schema.modelStrategy.modelId, modelId),
+        eq(schema.modelStrategy.isActive, true)
+      )
+    )
+    .orderBy(desc(schema.modelStrategy.createdAt))
+    .limit(1);
+  return strategy || null;
+}
+
+export const getGetStrategyTool = (modelId: number) =>
+  tool({
+    description:
+      "Retrieves your current active prediction strategy/policy. Use this to review your existing strategy before deciding whether to update it.",
+    inputSchema: z.object({}),
+    execute: async () => {
+      try {
+        const strategy = await getModelStrategy(modelId);
+        return {
+          status: "success",
+          data: strategy
+            ? {
+                strategy: strategy.strategy,
+                rationale: strategy.rationale,
+                setAt: strategy.createdAt?.toISOString()
+              }
+            : null
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while getting strategy: ${e}`
+        };
+      }
+    }
+  });
+
+export const getSetStrategyTool = (modelId: number) =>
+  tool({
+    description:
+      "Sets or updates your prediction strategy/policy. This defines how you approach predictions — your focus areas, risk tolerance, timing preferences, and analytical framework. You MUST set a strategy before making any predictions if you don't have one. You can update your strategy at any time if you believe a change would improve your performance. Setting a new strategy deactivates the previous one.",
+    inputSchema: z.object({
+      strategy: z
+        .string()
+        .describe(
+          "Your prediction strategy/policy. Describe your approach to making predictions: what types of events you focus on, your risk tolerance, how you manage tokens, your analytical framework, timing preferences, and any self-imposed rules."
+        ),
+      rationale: z
+        .string()
+        .describe(
+          "Why you are setting or updating this strategy. If updating, explain what changed and why the new approach is better."
+        )
+    }),
+    execute: async ({ strategy, rationale }) => {
+      try {
+        await db.transaction(async (tx) => {
+          // Deactivate all existing strategies for this model
+          await tx
+            .update(schema.modelStrategy)
+            .set({ isActive: false, updatedAt: new Date() })
+            .where(
+              and(
+                eq(schema.modelStrategy.modelId, modelId),
+                eq(schema.modelStrategy.isActive, true)
+              )
+            );
+
+          // Insert new active strategy
+          await tx.insert(schema.modelStrategy).values({
+            modelId,
+            strategy,
+            rationale,
+            isActive: true
+          });
+        });
+
+        return {
+          status: "success",
+          data: { strategy, rationale }
+        };
+      } catch (e) {
+        return {
+          status: "error",
+          message: `An error occurred while setting strategy: ${e}`
+        };
+      }
+    }
+  });
+
 async function runPredictionTask({
   modelId,
   modelProvider,
@@ -766,11 +860,13 @@ async function runPredictionTask({
     );
   const hasPredictedRecently = recentPredictions!.total > 0;
 
+  const currentStrategy = await getModelStrategy(modelId);
+
   const system = `You are an elite, autonomous AI forecasting agent competing in a real-time prediction market.
 
 Your goal is to maximize your prediction accuracy. You will be ranked purely based on your accuracy, NOT based on how many tokens you have left at the end. Tokens are just a survival mechanism to ensure you stay alive to make more accurate predictions.
 
-This simulation strictly ends on April 30, 2026. Models will only run until April 30. Any pending predictions that evaluate after that will be a waste and you will not get rewarded for them. Focus your efforts on predictions that resolve before the deadline. Ensure you predict events that increase your overall accuracy.
+This simulation strictly ends on May 30, 2026. Models will only run until May 30. Any pending predictions that evaluate after that will be a waste and you will not get rewarded for them. Focus your efforts on predictions that resolve before the deadline. Ensure you predict events that increase your overall accuracy.
 
 Currently analyzing all recent news across various categories.
 
@@ -796,10 +892,19 @@ Your performance:
 Maximize your tokens, not your prediction count. Strategic restraint is critical.
 
 ----------------------
+YOUR STRATEGY / POLICY
+----------------------
+${currentStrategy ? `Your current active strategy is:
+"${currentStrategy.strategy}"
+(Set on: ${currentStrategy.createdAt?.toISOString()}, Rationale: ${currentStrategy.rationale})
+
+You may update your strategy at any time using the \`setStrategy\` tool if you believe a change would improve your performance. You do NOT need to set a new strategy if your current one is still effective.` : `You do NOT have a strategy set yet. You MUST use the \`setStrategy\` tool to define your prediction strategy/policy BEFORE making any predictions. Your strategy should describe your approach to predictions: focus areas, risk tolerance, token management, analytical framework, and any self-imposed rules. Use \`getStrategy\` to confirm you have no strategy, then use \`setStrategy\` to create one.`}
+
+----------------------
 AUTONOMY & TOOLS
 ----------------------
 You operate independently. Use tools judiciously to build overwhelming confidence:
-- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution, getFlightDelays, getCryptoQuotes, getMarketImplications, getHyperliquidFlow, getFuelPrices
+- getNews, getSimilarContent, perplexitySearch, searchPredictions, searchInsights, makePrediction, insight, executionReasoning, scheduleNextExecution, getFlightDelays, getCryptoQuotes, getMarketImplications, getHyperliquidFlow, getFuelPrices, getStrategy, setStrategy
 You MUST call the \`executionReasoning\` tool right before \`scheduleNextExecution\` to explain your token management and timing strategy.
 
 ----------------------
@@ -943,7 +1048,9 @@ Act decisively. Use your tools freely and shape your own analysis workflow.`;
       makePrediction: getMakePredictionTool(modelId),
       executionReasoning,
       scheduleNextExecution: getScheduleNextExecutionTool(modelId),
-      insight
+      insight,
+      getStrategy: getGetStrategyTool(modelId),
+      setStrategy: getSetStrategyTool(modelId)
     },
     stopWhen: [hasToolCall("scheduleNextExecution")],
     //@ts-ignore
@@ -992,8 +1099,8 @@ Act decisively. Use your tools freely and shape your own analysis workflow.`;
 }
 
 async function runAllPredictionTasks() {
-  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
-    console.log("April 30 passed, prediction task exiting.");
+  if (new Date() > new Date("2026-05-30T23:59:59Z")) {
+    console.log("May 30 passed, prediction task exiting.");
     return;
   }
   try {
@@ -1049,8 +1156,8 @@ async function runAllPredictionTasks() {
 }
 
 async function runOracleTask() {
-  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
-    console.log("April 30 passed, oracle task exiting.");
+  if (new Date() > new Date("2026-05-30T23:59:59Z")) {
+    console.log("May 30 passed, oracle task exiting.");
     return;
   }
   try {
@@ -1163,8 +1270,8 @@ Respond with the appropriate boolean and provide your reasoning. If there is no 
 }
 
 async function runTaxTask() {
-  if (new Date() > new Date("2026-04-30T23:59:59Z")) {
-    console.log("April 30 passed, tax task exiting.");
+  if (new Date() > new Date("2026-05-30T23:59:59Z")) {
+    console.log("May 30 passed, tax task exiting.");
     return;
   }
   try {
